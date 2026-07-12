@@ -21,6 +21,7 @@ Mega apps die when they're built as fifteen separate apps glued together — fif
 3. **One data foundation.** Modules share primitives; nothing gets its own snowflake infrastructure.
 4. **Your data is yours.** Full export at any time (JSON/CSV). No feature ships without export support.
 5. **Ship a vertical slice every phase.** Each phase ends with something genuinely usable, not scaffolding.
+6. **Sticky by design.** The app earns the daily open: a day-progress ring you want to fill, streaks you don't want to break, a one-tap journal close to the day, and nudge copy that talks to you. Every module ships with its retention hook, not as an afterthought.
 
 ---
 
