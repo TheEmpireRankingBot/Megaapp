@@ -4,7 +4,7 @@ A personal **Life OS** — one app for everything: tasks, habits, health, money,
 
 ## Status
 
-🏗️ **Phase 0 — foundation.** The master plan — vision, module catalog, architecture, data model, and phased roadmap — lives in [`docs/PLAN.md`](docs/PLAN.md).
+🏗️ **Building — daily loop, money, health, and weekly reviews shipped.** The master plan (vision, module catalog, roadmap) lives in [`docs/PLAN.md`](docs/PLAN.md). The engineering handover — architecture, exact data shapes, conventions, verification workflow, and build-ready specs for what's next — lives in [`docs/HANDOVER.md`](docs/HANDOVER.md); agents should also read [`AGENTS.md`](AGENTS.md).
 
 ## Development
 
