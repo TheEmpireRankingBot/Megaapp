@@ -16,7 +16,15 @@ import {
 import { computeCurrentStreak } from "@/lib/data";
 import { parseCapture } from "@/lib/capture";
 
-const MODULE_PATHS = ["/today", "/tasks", "/habits", "/journal", "/money", "/health"];
+const MODULE_PATHS = [
+  "/today",
+  "/tasks",
+  "/habits",
+  "/journal",
+  "/money",
+  "/health",
+  "/review",
+];
 function revalidateAll() {
   for (const p of MODULE_PATHS) revalidatePath(p);
 }
@@ -485,6 +493,52 @@ export async function quickCapture(formData: FormData) {
       });
       break;
     }
+  }
+  revalidateAll();
+}
+
+// ---------------------------------------------------------------------------
+// Weekly review — one reflection per week, upserted like the journal.
+// ---------------------------------------------------------------------------
+
+export async function saveReview(formData: FormData) {
+  const wins = String(formData.get("wins") ?? "").trim();
+  const challenges = String(formData.get("challenges") ?? "").trim();
+  const focus = String(formData.get("focus") ?? "").trim();
+  if (!wins && !challenges && !focus) return;
+
+  const user = await getCurrentUser();
+  const db = await getDb();
+  const { weekStartKey } = await import("@/lib/review");
+  const weekStart = weekStartKey(todayKey());
+  const payload = { weekStart, wins, challenges, focus };
+
+  const existing = await db
+    .select()
+    .from(schema.entries)
+    .where(
+      and(
+        eq(schema.entries.userId, user.id),
+        eq(schema.entries.module, "review"),
+        eq(schema.entries.type, "weekly"),
+        gte(schema.entries.occurredAt, dayStart(weekStart)),
+      ),
+    )
+    .limit(1);
+
+  if (existing.length > 0) {
+    await db
+      .update(schema.entries)
+      .set({ payload })
+      .where(eq(schema.entries.id, existing[0].id));
+  } else {
+    await db.insert(schema.entries).values({
+      userId: user.id,
+      module: "review",
+      type: "weekly",
+      occurredAt: new Date(),
+      payload,
+    });
   }
   revalidateAll();
 }

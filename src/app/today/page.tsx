@@ -2,7 +2,8 @@ import Link from "next/link";
 import { getCurrentUser } from "@/lib/user";
 import { getTodayData, MOODS } from "@/lib/data";
 import { formatSGD, getSubscriptions } from "@/lib/money";
-import { TIMEZONE } from "@/lib/dates";
+import { getReviewForWeek, reviewDue, weekStartKey } from "@/lib/review";
+import { TIMEZONE, todayKey } from "@/lib/dates";
 import { ProgressRing } from "@/components/progress-ring";
 import { TaskRow } from "@/components/task-row";
 import { HabitRow } from "@/components/habit-row";
@@ -29,12 +30,14 @@ function nudge(done: number, total: number) {
 
 export default async function TodayPage() {
   const user = await getCurrentUser();
-  const [data, subs] = await Promise.all([
+  const [data, subs, weekReview] = await Promise.all([
     getTodayData(user.id),
     getSubscriptions(user.id),
+    getReviewForWeek(user.id, weekStartKey(todayKey())),
   ]);
   const { taskGroups, habits, journal, score } = data;
   const renewingSoon = subs.list.filter((s) => s.daysUntil <= 7);
+  const promptReview = reviewDue() && !weekReview;
 
   const now = new Date();
   const hour = Number(
@@ -76,6 +79,19 @@ export default async function TodayPage() {
       </header>
 
       <QuickCapture />
+
+      {promptReview && (
+        <Link
+          href="/review"
+          className="block rounded-xl border border-black/10 px-4 py-3 text-sm transition-colors hover:bg-black/[.02] dark:border-white/10 dark:hover:bg-white/[.03]"
+        >
+          <span className="font-medium">🗓️ Close out the week</span>{" "}
+          <span className="text-black/50 dark:text-white/50">
+            — your weekly review is drafted from this week&apos;s data, just add
+            three thoughts →
+          </span>
+        </Link>
+      )}
 
       {renewingSoon.length > 0 && (
         <Link

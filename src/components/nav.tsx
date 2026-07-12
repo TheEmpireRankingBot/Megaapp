@@ -9,16 +9,25 @@ import {
   BookOpen,
   Wallet,
   HeartPulse,
+  CalendarCheck,
   type LucideIcon,
 } from "lucide-react";
 
-const links: { href: string; label: string; icon: LucideIcon }[] = [
+// desktopOnly keeps the mobile bottom bar at six tabs; those pages stay
+// reachable from Today/Journal links.
+const links: {
+  href: string;
+  label: string;
+  icon: LucideIcon;
+  desktopOnly?: boolean;
+}[] = [
   { href: "/today", label: "Today", icon: Sun },
   { href: "/tasks", label: "Tasks", icon: CheckSquare },
   { href: "/habits", label: "Habits", icon: Repeat },
   { href: "/journal", label: "Journal", icon: BookOpen },
   { href: "/money", label: "Money", icon: Wallet },
   { href: "/health", label: "Health", icon: HeartPulse },
+  { href: "/review", label: "Review", icon: CalendarCheck, desktopOnly: true },
 ];
 
 export function Sidebar() {
@@ -54,7 +63,7 @@ export function BottomNav() {
   return (
     <nav className="md:hidden fixed inset-x-0 bottom-0 z-10 border-t border-black/10 dark:border-white/10 bg-background/90 backdrop-blur">
       <div className="flex justify-around pb-[env(safe-area-inset-bottom)]">
-        {links.map(({ href, label, icon: Icon }) => {
+        {links.filter((l) => !l.desktopOnly).map(({ href, label, icon: Icon }) => {
           const active = pathname.startsWith(href);
           return (
             <Link
