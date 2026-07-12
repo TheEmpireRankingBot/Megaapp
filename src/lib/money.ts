@@ -1,6 +1,6 @@
 import { and, desc, eq, gte, lt } from "drizzle-orm";
 import { getDb, schema } from "@/db";
-import { dayStart, todayKey } from "@/lib/dates";
+import { dayStart, daysBetween, todayKey } from "@/lib/dates";
 
 export const CATEGORIES = [
   "food",
@@ -51,6 +51,66 @@ export function formatSGD(amount: number): string {
     style: "currency",
     currency: "SGD",
   }).format(amount);
+}
+
+// ---------------------------------------------------------------------------
+// Subscriptions — items rows (module money, type subscription) whose payload
+// holds amount/cadence/next renewal; a reminders row mirrors the renewal so
+// the shared scheduling system can notify once notifications exist.
+// ---------------------------------------------------------------------------
+
+export type SubscriptionPayload = {
+  amount: number;
+  cadence: "monthly" | "yearly";
+  nextRenewalKey: string;
+  category: string;
+};
+
+export type SubscriptionView = SubscriptionPayload & {
+  itemId: string;
+  name: string;
+  /** Days until renewal; 0 = today, negative = overdue. */
+  daysUntil: number;
+  monthlyEquivalent: number;
+};
+
+export async function getSubscriptions(
+  userId: string,
+): Promise<{ list: SubscriptionView[]; monthlyTotal: number }> {
+  const db = await getDb();
+  const today = todayKey();
+  const rows = await db
+    .select()
+    .from(schema.items)
+    .where(
+      and(
+        eq(schema.items.userId, userId),
+        eq(schema.items.module, "money"),
+        eq(schema.items.type, "subscription"),
+        eq(schema.items.status, "active"),
+      ),
+    );
+
+  const list = rows
+    .map((r) => {
+      const p = r.payload as SubscriptionPayload;
+      return {
+        itemId: r.id,
+        name: r.title,
+        amount: p.amount,
+        cadence: p.cadence,
+        nextRenewalKey: p.nextRenewalKey,
+        category: p.category,
+        daysUntil: daysBetween(today, p.nextRenewalKey),
+        monthlyEquivalent: p.cadence === "yearly" ? p.amount / 12 : p.amount,
+      };
+    })
+    .sort((a, b) => a.daysUntil - b.daysUntil);
+
+  return {
+    list,
+    monthlyTotal: list.reduce((s, x) => s + x.monthlyEquivalent, 0),
+  };
 }
 
 export async function getMoneySummary(

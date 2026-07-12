@@ -1,5 +1,5 @@
 import { Check, Repeat, X } from "lucide-react";
-import { toggleTask, deleteTask } from "@/lib/actions";
+import { toggleTask, deleteItem } from "@/lib/actions";
 import { formatDay, todayKey } from "@/lib/dates";
 import type { TaskView } from "@/lib/data";
 
@@ -52,7 +52,7 @@ export function TaskRow({ task }: { task: TaskView }) {
         )}
       </div>
 
-      <form action={deleteTask}>
+      <form action={deleteItem}>
         <input type="hidden" name="itemId" value={task.itemId} />
         <button
           type="submit"

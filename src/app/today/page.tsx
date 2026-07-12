@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { getCurrentUser } from "@/lib/user";
 import { getTodayData, MOODS } from "@/lib/data";
+import { formatSGD, getSubscriptions } from "@/lib/money";
 import { TIMEZONE } from "@/lib/dates";
 import { ProgressRing } from "@/components/progress-ring";
 import { TaskRow } from "@/components/task-row";
@@ -28,8 +29,12 @@ function nudge(done: number, total: number) {
 
 export default async function TodayPage() {
   const user = await getCurrentUser();
-  const data = await getTodayData(user.id);
+  const [data, subs] = await Promise.all([
+    getTodayData(user.id),
+    getSubscriptions(user.id),
+  ]);
   const { taskGroups, habits, journal, score } = data;
+  const renewingSoon = subs.list.filter((s) => s.daysUntil <= 7);
 
   const now = new Date();
   const hour = Number(
@@ -71,6 +76,29 @@ export default async function TodayPage() {
       </header>
 
       <QuickCapture />
+
+      {renewingSoon.length > 0 && (
+        <Link
+          href="/money"
+          className="block rounded-xl border border-amber-500/30 bg-amber-500/5 px-4 py-3 text-sm transition-colors hover:bg-amber-500/10"
+        >
+          <span className="font-medium text-amber-700 dark:text-amber-400">
+            💳 Coming up:
+          </span>{" "}
+          {renewingSoon
+            .map(
+              (s) =>
+                `${s.name} ${formatSGD(s.amount)} ${
+                  s.daysUntil < 0
+                    ? `(overdue ${-s.daysUntil}d)`
+                    : s.daysUntil === 0
+                      ? "(today)"
+                      : `(in ${s.daysUntil}d)`
+                }`,
+            )
+            .join(" · ")}
+        </Link>
+      )}
 
       <section className="space-y-2">
         <h2 className="text-sm font-semibold uppercase tracking-wide text-black/50 dark:text-white/50">

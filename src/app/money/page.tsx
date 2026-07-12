@@ -1,8 +1,33 @@
 import { X } from "lucide-react";
 import { getCurrentUser } from "@/lib/user";
-import { CATEGORIES, formatSGD, getMoneySummary } from "@/lib/money";
-import { logExpense, setMonthlyBudget, deleteEntry } from "@/lib/actions";
+import {
+  CATEGORIES,
+  formatSGD,
+  getMoneySummary,
+  getSubscriptions,
+} from "@/lib/money";
+import {
+  logExpense,
+  setMonthlyBudget,
+  deleteEntry,
+  createSubscription,
+  subscriptionPaid,
+  deleteItem,
+} from "@/lib/actions";
 import { formatDay, todayKey } from "@/lib/dates";
+
+function renewalLabel(daysUntil: number, key: string) {
+  if (daysUntil < 0)
+    return { text: `overdue ${-daysUntil}d`, tone: "text-red-500 font-medium" };
+  if (daysUntil === 0)
+    return { text: "due today", tone: "text-amber-600 dark:text-amber-400 font-medium" };
+  if (daysUntil <= 7)
+    return {
+      text: `renews in ${daysUntil}d`,
+      tone: "text-amber-600 dark:text-amber-400",
+    };
+  return { text: `renews ${formatDay(key)}`, tone: "text-black/45 dark:text-white/45" };
+}
 
 export const metadata = { title: "Money" };
 export const dynamic = "force-dynamic";
@@ -11,7 +36,10 @@ export default async function MoneyPage() {
   const user = await getCurrentUser();
   const settings = user.settings as { budgetMonthly?: number };
   const budget = settings.budgetMonthly ?? null;
-  const summary = await getMoneySummary(user.id, budget);
+  const [summary, subs] = await Promise.all([
+    getMoneySummary(user.id, budget),
+    getSubscriptions(user.id),
+  ]);
   const budgetUsed = budget ? Math.min(summary.total / budget, 1) : 0;
   const overBudget = budget !== null && summary.total > budget;
 
@@ -124,6 +152,114 @@ export default async function MoneyPage() {
           Or from Today&apos;s capture bar:{" "}
           <span className="font-mono">$14.50 lunch #food</span>
         </p>
+      </section>
+
+      <section className="space-y-2">
+        <div className="flex items-baseline justify-between">
+          <h2 className="text-sm font-semibold uppercase tracking-wide text-black/50 dark:text-white/50">
+            Subscriptions
+          </h2>
+          {subs.list.length > 0 && (
+            <span className="text-xs text-black/45 dark:text-white/45">
+              ≈ {formatSGD(subs.monthlyTotal)}/month
+            </span>
+          )}
+        </div>
+
+        {subs.list.length === 0 ? (
+          <p className="px-2 text-sm text-black/45 dark:text-white/45">
+            Track recurring costs — Netflix, gym, iCloud — and get warned
+            before they renew.
+          </p>
+        ) : (
+          <div className="space-y-1">
+            {subs.list.map((s) => {
+              const label = renewalLabel(s.daysUntil, s.nextRenewalKey);
+              return (
+                <div
+                  key={s.itemId}
+                  className="group flex items-center gap-3 rounded-lg px-2 py-1.5 hover:bg-black/[.03] dark:hover:bg-white/[.04]"
+                >
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-sm">{s.name}</p>
+                    <p className={`text-xs ${label.tone}`}>{label.text}</p>
+                  </div>
+                  <span className="text-sm tabular-nums">
+                    {formatSGD(s.amount)}
+                    <span className="text-xs text-black/45 dark:text-white/45">
+                      /{s.cadence === "monthly" ? "mo" : "yr"}
+                    </span>
+                  </span>
+                  {s.daysUntil <= 0 && (
+                    <form action={subscriptionPaid}>
+                      <input type="hidden" name="itemId" value={s.itemId} />
+                      <button
+                        type="submit"
+                        className="rounded-md border border-black/15 px-2 py-1 text-xs font-medium hover:bg-black/5 dark:border-white/15 dark:hover:bg-white/10"
+                      >
+                        Paid
+                      </button>
+                    </form>
+                  )}
+                  <form action={deleteItem}>
+                    <input type="hidden" name="itemId" value={s.itemId} />
+                    <button
+                      type="submit"
+                      aria-label={`Delete subscription ${s.name}`}
+                      className="rounded p-1 text-black/30 opacity-0 transition-opacity hover:text-red-500 group-hover:opacity-100 dark:text-white/30"
+                    >
+                      <X size={14} />
+                    </button>
+                  </form>
+                </div>
+              );
+            })}
+          </div>
+        )}
+
+        <form
+          action={createSubscription}
+          className="flex flex-wrap items-center gap-2 rounded-xl border border-dashed border-black/15 p-3 dark:border-white/15"
+        >
+          <input
+            name="name"
+            required
+            placeholder="Name (e.g. Netflix)"
+            autoComplete="off"
+            className="min-w-32 flex-1 rounded-lg border border-black/15 bg-transparent px-3 py-2 text-sm outline-none focus:border-black/40 dark:border-white/15 dark:focus:border-white/40"
+          />
+          <input
+            name="amount"
+            type="number"
+            step="0.01"
+            min="0.01"
+            required
+            placeholder="0.00"
+            className="w-24 rounded-lg border border-black/15 bg-transparent px-3 py-2 text-sm tabular-nums outline-none focus:border-black/40 dark:border-white/15 dark:focus:border-white/40"
+          />
+          <select
+            name="cadence"
+            className="rounded-lg border border-black/15 bg-transparent px-2 py-2 text-sm dark:border-white/15 dark:bg-black"
+          >
+            <option value="monthly">monthly</option>
+            <option value="yearly">yearly</option>
+          </select>
+          <label className="flex items-center gap-1.5 text-sm text-black/60 dark:text-white/60">
+            next renewal
+            <input
+              type="date"
+              name="next"
+              required
+              className="rounded-lg border border-black/15 bg-transparent px-2 py-1.5 text-sm dark:border-white/15 dark:[color-scheme:dark]"
+            />
+          </label>
+          <button
+            type="submit"
+            className="rounded-lg bg-black px-4 py-2 text-sm font-medium text-white transition-opacity hover:opacity-80 dark:bg-white dark:text-black"
+          >
+            Add
+          </button>
+        </form>
       </section>
 
       {summary.byCategory.length > 0 && (

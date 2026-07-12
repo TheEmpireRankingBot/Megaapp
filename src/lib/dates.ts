@@ -44,6 +44,23 @@ export function nextDueKey(
   return dayKey(d);
 }
 
+/** Signed whole days from a to b (positive = b is later). */
+export function daysBetween(a: string, b: string): number {
+  return Math.round(
+    (dayStart(b).getTime() - dayStart(a).getTime()) / 86_400_000,
+  );
+}
+
+export function nextRenewalKey(
+  fromKey: string,
+  cadence: "monthly" | "yearly",
+): string {
+  if (cadence === "monthly") return nextDueKey(fromKey, "monthly");
+  const d = dayNoon(fromKey);
+  d.setUTCFullYear(d.getUTCFullYear() + 1);
+  return dayKey(d);
+}
+
 export function formatDay(key: string): string {
   const today = todayKey();
   if (key === today) return "Today";

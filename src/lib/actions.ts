@@ -10,6 +10,7 @@ import {
   dayNoon,
   dayStart,
   nextDueKey,
+  nextRenewalKey,
   todayKey,
 } from "@/lib/dates";
 import { computeCurrentStreak } from "@/lib/data";
@@ -136,7 +137,8 @@ export async function toggleTask(formData: FormData) {
   revalidateAll();
 }
 
-export async function deleteTask(formData: FormData) {
+/** Delete any item the user owns (task, subscription, …); cascades. */
+export async function deleteItem(formData: FormData) {
   const itemId = String(formData.get("itemId") ?? "");
   if (!itemId) return;
   const user = await getCurrentUser();
@@ -254,6 +256,7 @@ async function insertExpense(
   note: string,
   category: string | null,
   day?: string,
+  itemId?: string,
 ) {
   const db = await getDb();
   const [entry] = await db
@@ -265,6 +268,7 @@ async function insertExpense(
       occurredAt: day ? dayNoon(day) : new Date(),
       value: String(amount),
       note,
+      itemId,
     })
     .returning();
   await db.insert(schema.transactions).values({
@@ -282,6 +286,84 @@ export async function logExpense(formData: FormData) {
   const day = String(formData.get("day") ?? "").trim() || undefined;
   const user = await getCurrentUser();
   await insertExpense(user.id, amount, note, category, day);
+  revalidateAll();
+}
+
+export async function createSubscription(formData: FormData) {
+  const name = String(formData.get("name") ?? "").trim();
+  const amount = Number(formData.get("amount"));
+  const cadence = String(formData.get("cadence") ?? "monthly");
+  const next = String(formData.get("next") ?? "").trim();
+  if (
+    !name ||
+    !Number.isFinite(amount) ||
+    amount <= 0 ||
+    (cadence !== "monthly" && cadence !== "yearly") ||
+    !/^\d{4}-\d{2}-\d{2}$/.test(next)
+  )
+    return;
+  const category = String(formData.get("category") ?? "bills");
+
+  const user = await getCurrentUser();
+  const db = await getDb();
+  const [item] = await db
+    .insert(schema.items)
+    .values({
+      userId: user.id,
+      module: "money",
+      type: "subscription",
+      title: name,
+      payload: { amount, cadence, nextRenewalKey: next, category },
+    })
+    .returning();
+  // Mirror the renewal into the shared reminders system (plan §3) so
+  // notifications can pick it up once a delivery channel exists.
+  await db.insert(schema.reminders).values({
+    userId: user.id,
+    itemId: item.id,
+    schedule: cadence,
+    nextFireAt: dayStart(next),
+  });
+  revalidateAll();
+}
+
+/** Log the renewal as an expense and advance the next renewal date. */
+export async function subscriptionPaid(formData: FormData) {
+  const itemId = String(formData.get("itemId") ?? "");
+  if (!itemId) return;
+  const user = await getCurrentUser();
+  const db = await getDb();
+
+  const [item] = await db
+    .select()
+    .from(schema.items)
+    .where(
+      and(
+        eq(schema.items.id, itemId),
+        eq(schema.items.userId, user.id),
+        eq(schema.items.type, "subscription"),
+      ),
+    )
+    .limit(1);
+  if (!item) return;
+
+  const p = item.payload as {
+    amount: number;
+    cadence: "monthly" | "yearly";
+    nextRenewalKey: string;
+    category: string;
+  };
+  await insertExpense(user.id, p.amount, item.title, p.category, undefined, item.id);
+
+  const next = nextRenewalKey(p.nextRenewalKey, p.cadence);
+  await db
+    .update(schema.items)
+    .set({ payload: { ...p, nextRenewalKey: next }, updatedAt: new Date() })
+    .where(eq(schema.items.id, item.id));
+  await db
+    .update(schema.reminders)
+    .set({ nextFireAt: dayStart(next) })
+    .where(eq(schema.reminders.itemId, item.id));
   revalidateAll();
 }
 
