@@ -4,7 +4,20 @@ A personal **Life OS** — one app for everything: tasks, habits, health, money,
 
 ## Status
 
-📋 **Planning.** The master plan — vision, module catalog, architecture, data model, and phased roadmap — lives in [`docs/PLAN.md`](docs/PLAN.md).
+🏗️ **Phase 0 — foundation.** The master plan — vision, module catalog, architecture, data model, and phased roadmap — lives in [`docs/PLAN.md`](docs/PLAN.md).
+
+## Development
+
+```bash
+npm install
+npm run dev        # http://localhost:3000
+```
+
+No configuration needed: without a `DATABASE_URL`, the app runs on an embedded Postgres ([PGlite](https://pglite.dev)) persisted to `.pglite/`, and migrations apply automatically on first connection. To use a real Postgres (e.g. Supabase), set `DATABASE_URL` and run `npm run db:migrate`.
+
+Schema lives in [`src/db/schema.ts`](src/db/schema.ts); after changing it, run `npm run db:generate` to produce a migration. Everything you own is exportable as JSON at [`/api/export`](http://localhost:3000/api/export).
+
+**Auth:** Phase 0 is single-user with no login — the first `users` row is seeded on first touch (see `src/lib/user.ts`). Supabase Auth replaces this in a later phase.
 
 ## The short version
 
