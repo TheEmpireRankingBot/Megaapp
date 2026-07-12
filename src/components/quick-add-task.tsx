@@ -1,24 +1,4 @@
-import { Plus } from "lucide-react";
 import { createTask } from "@/lib/actions";
-import { todayKey } from "@/lib/dates";
-
-/** One-line capture: type a title, hit enter. Detailed add lives on /tasks. */
-export function QuickAddTask({ defaultDueToday = false }: { defaultDueToday?: boolean }) {
-  return (
-    <form action={createTask} className="flex items-center gap-2">
-      {defaultDueToday && <input type="hidden" name="due" value={todayKey()} />}
-      <div className="flex flex-1 items-center gap-2 rounded-lg border border-black/15 px-3 py-2 focus-within:border-black/40 dark:border-white/15 dark:focus-within:border-white/40">
-        <Plus size={16} className="shrink-0 text-black/40 dark:text-white/40" />
-        <input
-          name="title"
-          placeholder="Add a task…"
-          autoComplete="off"
-          className="w-full bg-transparent text-sm outline-none placeholder:text-black/35 dark:placeholder:text-white/35"
-        />
-      </div>
-    </form>
-  );
-}
 
 /** Full add form for the Tasks page: due date, repeat, priority. */
 export function AddTaskForm() {

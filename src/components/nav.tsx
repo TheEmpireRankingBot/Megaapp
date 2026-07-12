@@ -8,6 +8,7 @@ import {
   Repeat,
   BookOpen,
   Wallet,
+  HeartPulse,
   type LucideIcon,
 } from "lucide-react";
 
@@ -17,6 +18,7 @@ const links: { href: string; label: string; icon: LucideIcon }[] = [
   { href: "/habits", label: "Habits", icon: Repeat },
   { href: "/journal", label: "Journal", icon: BookOpen },
   { href: "/money", label: "Money", icon: Wallet },
+  { href: "/health", label: "Health", icon: HeartPulse },
 ];
 
 export function Sidebar() {

@@ -13,8 +13,9 @@ import {
   todayKey,
 } from "@/lib/dates";
 import { computeCurrentStreak } from "@/lib/data";
+import { parseCapture } from "@/lib/capture";
 
-const MODULE_PATHS = ["/today", "/tasks", "/habits", "/journal"];
+const MODULE_PATHS = ["/today", "/tasks", "/habits", "/journal", "/money", "/health"];
 function revalidateAll() {
   for (const p of MODULE_PATHS) revalidatePath(p);
 }
@@ -240,6 +241,169 @@ export async function archiveHabit(formData: FormData) {
     .update(schema.items)
     .set({ status: "archived", updatedAt: new Date() })
     .where(and(eq(schema.items.id, itemId), eq(schema.items.userId, user.id)));
+  revalidateAll();
+}
+
+// ---------------------------------------------------------------------------
+// Money
+// ---------------------------------------------------------------------------
+
+async function insertExpense(
+  userId: string,
+  amount: number,
+  note: string,
+  category: string | null,
+  day?: string,
+) {
+  const db = await getDb();
+  const [entry] = await db
+    .insert(schema.entries)
+    .values({
+      userId,
+      module: "money",
+      type: "expense",
+      occurredAt: day ? dayNoon(day) : new Date(),
+      value: String(amount),
+      note,
+    })
+    .returning();
+  await db.insert(schema.transactions).values({
+    entryId: entry.id,
+    amount: String(amount),
+    category: category ?? "other",
+  });
+}
+
+export async function logExpense(formData: FormData) {
+  const amount = Number(formData.get("amount"));
+  if (!Number.isFinite(amount) || amount <= 0) return;
+  const note = String(formData.get("note") ?? "").trim();
+  const category = String(formData.get("category") ?? "other");
+  const day = String(formData.get("day") ?? "").trim() || undefined;
+  const user = await getCurrentUser();
+  await insertExpense(user.id, amount, note, category, day);
+  revalidateAll();
+}
+
+export async function setMonthlyBudget(formData: FormData) {
+  const budget = Number(formData.get("budget"));
+  const user = await getCurrentUser();
+  const db = await getDb();
+  const settings = { ...(user.settings as Record<string, unknown>) };
+  if (Number.isFinite(budget) && budget > 0) settings.budgetMonthly = budget;
+  else delete settings.budgetMonthly;
+  await db
+    .update(schema.users)
+    .set({ settings })
+    .where(eq(schema.users.id, user.id));
+  revalidateAll();
+}
+
+// ---------------------------------------------------------------------------
+// Health
+// ---------------------------------------------------------------------------
+
+const HEALTH_TYPES = ["weight", "sleep", "water", "workout"] as const;
+type HealthType = (typeof HEALTH_TYPES)[number];
+
+async function insertHealth(
+  userId: string,
+  type: HealthType,
+  value: number | null,
+  note = "",
+) {
+  const db = await getDb();
+  await db.insert(schema.entries).values({
+    userId,
+    module: "health",
+    type,
+    occurredAt: new Date(),
+    value: value === null ? null : String(value),
+    note,
+  });
+}
+
+export async function logHealth(formData: FormData) {
+  const type = String(formData.get("type") ?? "");
+  if (!HEALTH_TYPES.includes(type as HealthType)) return;
+  const valueRaw = formData.get("value");
+  const value =
+    valueRaw !== null && String(valueRaw).trim() !== ""
+      ? Number(valueRaw)
+      : null;
+  if (value !== null && (!Number.isFinite(value) || value <= 0)) return;
+  const note = String(formData.get("note") ?? "").trim();
+  if (value === null && !note) return;
+  const user = await getCurrentUser();
+  await insertHealth(user.id, type as HealthType, value, note);
+  revalidateAll();
+}
+
+// ---------------------------------------------------------------------------
+// Shared
+// ---------------------------------------------------------------------------
+
+/** Delete any log entry the user owns (expense, health log, …). */
+export async function deleteEntry(formData: FormData) {
+  const entryId = String(formData.get("entryId") ?? "");
+  if (!entryId) return;
+  const user = await getCurrentUser();
+  const db = await getDb();
+  await db
+    .delete(schema.entries)
+    .where(
+      and(eq(schema.entries.id, entryId), eq(schema.entries.userId, user.id)),
+    );
+  revalidateAll();
+}
+
+// Quick Capture v2: one input, many destinations (src/lib/capture.ts).
+export async function quickCapture(formData: FormData) {
+  const parsed = parseCapture(String(formData.get("text") ?? ""));
+  if (!parsed) return;
+  const user = await getCurrentUser();
+  const db = await getDb();
+
+  switch (parsed.kind) {
+    case "expense":
+      await insertExpense(user.id, parsed.amount, parsed.note, parsed.category);
+      break;
+    case "weight":
+      await insertHealth(user.id, "weight", parsed.kg);
+      break;
+    case "sleep":
+      await insertHealth(user.id, "sleep", parsed.hours);
+      break;
+    case "water":
+      await insertHealth(user.id, "water", parsed.ml);
+      break;
+    case "workout":
+      await insertHealth(user.id, "workout", parsed.minutes, parsed.note);
+      break;
+    case "task": {
+      const dueKey =
+        parsed.due === "today"
+          ? todayKey()
+          : parsed.due === "tomorrow"
+            ? nextDueKey(todayKey(), "daily")
+            : null;
+      const [item] = await db
+        .insert(schema.items)
+        .values({
+          userId: user.id,
+          module: "tasks",
+          type: "task",
+          title: parsed.title,
+        })
+        .returning();
+      await db.insert(schema.tasks).values({
+        itemId: item.id,
+        dueAt: dueKey ? dayNoon(dueKey) : null,
+        priority: parsed.priority,
+      });
+      break;
+    }
+  }
   revalidateAll();
 }
 

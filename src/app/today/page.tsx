@@ -5,7 +5,7 @@ import { TIMEZONE } from "@/lib/dates";
 import { ProgressRing } from "@/components/progress-ring";
 import { TaskRow } from "@/components/task-row";
 import { HabitRow } from "@/components/habit-row";
-import { QuickAddTask } from "@/components/quick-add-task";
+import { QuickCapture } from "@/components/quick-capture";
 
 export const metadata = { title: "Today" };
 export const dynamic = "force-dynamic";
@@ -70,11 +70,12 @@ export default async function TodayPage() {
         <ProgressRing done={score.done} total={score.total} />
       </header>
 
+      <QuickCapture />
+
       <section className="space-y-2">
         <h2 className="text-sm font-semibold uppercase tracking-wide text-black/50 dark:text-white/50">
           Tasks
         </h2>
-        <QuickAddTask defaultDueToday />
         {openTasks.length === 0 && taskGroups.doneToday.length === 0 ? (
           <p className="px-2 py-1 text-sm text-black/45 dark:text-white/45">
             Nothing on the list for today.
