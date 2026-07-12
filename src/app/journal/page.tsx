@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { getCurrentUser } from "@/lib/user";
 import { getJournalForDay, getRecentJournal, MOODS } from "@/lib/data";
 import { formatDay, todayKey } from "@/lib/dates";
@@ -17,7 +18,15 @@ export default async function JournalPage() {
 
   return (
     <div className="space-y-8">
-      <h1 className="text-2xl font-bold tracking-tight">Journal</h1>
+      <div className="flex items-baseline justify-between">
+        <h1 className="text-2xl font-bold tracking-tight">Journal</h1>
+        <Link
+          href="/review"
+          className="text-xs text-black/45 underline-offset-2 hover:underline dark:text-white/45"
+        >
+          weekly review →
+        </Link>
+      </div>
 
       <section className="space-y-2">
         <h2 className="text-sm font-semibold uppercase tracking-wide text-black/50 dark:text-white/50">
