@@ -11,7 +11,7 @@ export async function GET() {
   const user = await getCurrentUser();
   const db = await getDb();
 
-  const [items, entries, tags, reminders] = await Promise.all([
+  const [items, entries, tags, reminders, pushSubscriptions] = await Promise.all([
     db.select().from(schema.items).where(eq(schema.items.userId, user.id)),
     db.select().from(schema.entries).where(eq(schema.entries.userId, user.id)),
     db.select().from(schema.tags).where(eq(schema.tags.userId, user.id)),
@@ -19,6 +19,16 @@ export async function GET() {
       .select()
       .from(schema.reminders)
       .where(eq(schema.reminders.userId, user.id)),
+    db
+      .select({
+        id: schema.pushSubscriptions.id,
+        endpoint: schema.pushSubscriptions.endpoint,
+        userAgent: schema.pushSubscriptions.userAgent,
+        createdAt: schema.pushSubscriptions.createdAt,
+        updatedAt: schema.pushSubscriptions.updatedAt,
+      })
+      .from(schema.pushSubscriptions)
+      .where(eq(schema.pushSubscriptions.userId, user.id)),
   ]);
 
   const itemIds = items.map((i) => i.id);
@@ -62,6 +72,9 @@ export async function GET() {
     itemTags,
     entryTags,
     reminders,
+    // Encryption keys are deliberately excluded; they are delivery secrets,
+    // not useful user data. Endpoint metadata remains visible in the export.
+    pushSubscriptions,
     tasks,
     habits,
     transactions,

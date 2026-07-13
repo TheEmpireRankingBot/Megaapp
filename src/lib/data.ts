@@ -28,37 +28,38 @@ export async function getActiveTasks(userId: string): Promise<TaskView[]> {
   const db = await getDb();
   const today = todayKey();
 
-  const rows = await db
-    .select({
-      taskId: schema.tasks.id,
-      itemId: schema.items.id,
-      title: schema.items.title,
-      dueAt: schema.tasks.dueAt,
-      recurrence: schema.tasks.recurrence,
-      priority: schema.tasks.priority,
-      doneAt: schema.tasks.doneAt,
-    })
-    .from(schema.tasks)
-    .innerJoin(schema.items, eq(schema.tasks.itemId, schema.items.id))
-    .where(
-      and(eq(schema.items.userId, userId), eq(schema.items.status, "active")),
-    );
-
-  // Which tasks were completed today (covers recurring tasks, whose doneAt
-  // stays null because completion just advances the due date).
-  const completions = await db
-    .select({ itemId: schema.entries.itemId })
-    .from(schema.entries)
-    .where(
-      and(
-        eq(schema.entries.userId, userId),
-        eq(schema.entries.module, "tasks"),
-        eq(schema.entries.type, "completed"),
-        gte(schema.entries.occurredAt, dayStart(today)),
-        lte(schema.entries.occurredAt, dayEnd(today)),
-        isNotNull(schema.entries.itemId),
+  const [rows, completions] = await Promise.all([
+    db
+      .select({
+        taskId: schema.tasks.id,
+        itemId: schema.items.id,
+        title: schema.items.title,
+        dueAt: schema.tasks.dueAt,
+        recurrence: schema.tasks.recurrence,
+        priority: schema.tasks.priority,
+        doneAt: schema.tasks.doneAt,
+      })
+      .from(schema.tasks)
+      .innerJoin(schema.items, eq(schema.tasks.itemId, schema.items.id))
+      .where(
+        and(eq(schema.items.userId, userId), eq(schema.items.status, "active")),
       ),
-    );
+    // Which tasks were completed today (covers recurring tasks, whose doneAt
+    // stays null because completion just advances the due date).
+    db
+      .select({ itemId: schema.entries.itemId })
+      .from(schema.entries)
+      .where(
+        and(
+          eq(schema.entries.userId, userId),
+          eq(schema.entries.module, "tasks"),
+          eq(schema.entries.type, "completed"),
+          gte(schema.entries.occurredAt, dayStart(today)),
+          lte(schema.entries.occurredAt, dayEnd(today)),
+          isNotNull(schema.entries.itemId),
+        ),
+      ),
+  ]);
   const completedTodayIds = new Set(completions.map((c) => c.itemId));
 
   return rows.map((r) => ({
@@ -139,34 +140,35 @@ export async function getHabits(userId: string): Promise<HabitView[]> {
   const today = todayKey();
   const windowStart = dayStart(addDays(today, -120));
 
-  const rows = await db
-    .select({
-      habitId: schema.habits.id,
-      itemId: schema.items.id,
-      title: schema.items.title,
-      streakBest: schema.habits.streakBest,
-      createdAt: schema.items.createdAt,
-    })
-    .from(schema.habits)
-    .innerJoin(schema.items, eq(schema.habits.itemId, schema.items.id))
-    .where(
-      and(eq(schema.items.userId, userId), eq(schema.items.status, "active")),
-    );
-
-  const checkins = await db
-    .select({
-      itemId: schema.entries.itemId,
-      occurredAt: schema.entries.occurredAt,
-    })
-    .from(schema.entries)
-    .where(
-      and(
-        eq(schema.entries.userId, userId),
-        eq(schema.entries.module, "habits"),
-        eq(schema.entries.type, "checkin"),
-        gte(schema.entries.occurredAt, windowStart),
+  const [rows, checkins] = await Promise.all([
+    db
+      .select({
+        habitId: schema.habits.id,
+        itemId: schema.items.id,
+        title: schema.items.title,
+        streakBest: schema.habits.streakBest,
+        createdAt: schema.items.createdAt,
+      })
+      .from(schema.habits)
+      .innerJoin(schema.items, eq(schema.habits.itemId, schema.items.id))
+      .where(
+        and(eq(schema.items.userId, userId), eq(schema.items.status, "active")),
       ),
-    );
+    db
+      .select({
+        itemId: schema.entries.itemId,
+        occurredAt: schema.entries.occurredAt,
+      })
+      .from(schema.entries)
+      .where(
+        and(
+          eq(schema.entries.userId, userId),
+          eq(schema.entries.module, "habits"),
+          eq(schema.entries.type, "checkin"),
+          gte(schema.entries.occurredAt, windowStart),
+        ),
+      ),
+  ]);
 
   const byHabit = new Map<string, Set<string>>();
   for (const c of checkins) {

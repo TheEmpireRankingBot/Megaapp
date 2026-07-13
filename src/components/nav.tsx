@@ -10,6 +10,7 @@ import {
   Wallet,
   HeartPulse,
   CalendarCheck,
+  Utensils,
   type LucideIcon,
 } from "lucide-react";
 
@@ -28,10 +29,12 @@ const links: {
   { href: "/money", label: "Money", icon: Wallet },
   { href: "/health", label: "Health", icon: HeartPulse },
   { href: "/review", label: "Review", icon: CalendarCheck, desktopOnly: true },
+  { href: "/meals", label: "Meals", icon: Utensils, desktopOnly: true },
 ];
 
 export function Sidebar() {
   const pathname = usePathname();
+  if (pathname.startsWith("/login") || pathname.startsWith("/auth")) return null;
   return (
     <aside className="hidden md:flex w-56 shrink-0 flex-col gap-1 border-r border-black/10 dark:border-white/10 p-4">
       <Link href="/today" className="mb-4 px-3 text-lg font-bold tracking-tight">
@@ -60,6 +63,7 @@ export function Sidebar() {
 
 export function BottomNav() {
   const pathname = usePathname();
+  if (pathname.startsWith("/login") || pathname.startsWith("/auth")) return null;
   return (
     <nav className="md:hidden fixed inset-x-0 bottom-0 z-10 border-t border-black/10 dark:border-white/10 bg-background/90 backdrop-blur">
       <div className="flex justify-around pb-[env(safe-area-inset-bottom)]">

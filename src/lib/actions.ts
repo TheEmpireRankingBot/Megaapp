@@ -1,7 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { and, eq, gte, lte } from "drizzle-orm";
+import { and, eq, gte, inArray, lte } from "drizzle-orm";
 import { getDb, schema } from "@/db";
 import { getCurrentUser } from "@/lib/user";
 import {
@@ -15,6 +15,15 @@ import {
 } from "@/lib/dates";
 import { computeCurrentStreak } from "@/lib/data";
 import { parseCapture } from "@/lib/capture";
+import {
+  getActiveGroceryList,
+  getMealPlanForWeek,
+  mealPlanDays,
+  type GroceryItem,
+  type RecipePayload,
+} from "@/lib/meals";
+import { weekStartKey } from "@/lib/review";
+import { sendPush } from "@/lib/notifications";
 
 const MODULE_PATHS = [
   "/today",
@@ -24,6 +33,7 @@ const MODULE_PATHS = [
   "/money",
   "/health",
   "/review",
+  "/meals",
 ];
 function revalidateAll() {
   for (const p of MODULE_PATHS) revalidatePath(p);
@@ -447,6 +457,317 @@ export async function deleteEntry(formData: FormData) {
   revalidateAll();
 }
 
+type PushSubscriptionInput = {
+  endpoint?: unknown;
+  keys?: { p256dh?: unknown; auth?: unknown };
+};
+
+function parsePushSubscription(value: FormDataEntryValue | null) {
+  if (typeof value !== "string" || value.length > 8_000) return null;
+  try {
+    const parsed = JSON.parse(value) as PushSubscriptionInput;
+    const endpoint = typeof parsed.endpoint === "string" ? parsed.endpoint : "";
+    const p256dh =
+      typeof parsed.keys?.p256dh === "string" ? parsed.keys.p256dh : "";
+    const auth = typeof parsed.keys?.auth === "string" ? parsed.keys.auth : "";
+    const url = new URL(endpoint);
+    if (
+      url.protocol !== "https:" ||
+      endpoint.length > 4_096 ||
+      !p256dh ||
+      p256dh.length > 1_024 ||
+      !auth ||
+      auth.length > 1_024
+    )
+      return null;
+    return { endpoint, p256dh, auth };
+  } catch {
+    return null;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Notifications
+// ---------------------------------------------------------------------------
+
+export async function savePushSubscription(formData: FormData) {
+  const subscription = parsePushSubscription(formData.get("subscription"));
+  if (!subscription) return { ok: false, message: "Invalid subscription." };
+
+  const user = await getCurrentUser();
+  const db = await getDb();
+  const userAgent = String(formData.get("userAgent") ?? "").slice(0, 500) || null;
+  await db
+    .insert(schema.pushSubscriptions)
+    .values({ userId: user.id, ...subscription, userAgent })
+    .onConflictDoUpdate({
+      target: schema.pushSubscriptions.endpoint,
+      set: {
+        userId: user.id,
+        p256dh: subscription.p256dh,
+        auth: subscription.auth,
+        userAgent,
+        updatedAt: new Date(),
+      },
+    });
+
+  const result = await sendPush(subscription, {
+    title: "Megaapp notifications are on",
+    body: "We’ll protect your streaks and remind you about what matters.",
+    url: "/today",
+    tag: "notifications-enabled",
+  });
+  if (result === "gone") {
+    await db
+      .delete(schema.pushSubscriptions)
+      .where(
+        and(
+          eq(schema.pushSubscriptions.userId, user.id),
+          eq(schema.pushSubscriptions.endpoint, subscription.endpoint),
+        ),
+      );
+    return { ok: false, message: "The browser subscription expired. Try again." };
+  }
+
+  revalidateAll();
+  return result === "sent"
+    ? { ok: true, message: "Notifications enabled — test sent." }
+    : { ok: true, message: "Notifications enabled." };
+}
+
+export async function deletePushSubscription(formData: FormData) {
+  const endpoint = String(formData.get("endpoint") ?? "");
+  if (!endpoint || endpoint.length > 4_096) return { ok: false };
+  const user = await getCurrentUser();
+  const db = await getDb();
+  await db
+    .delete(schema.pushSubscriptions)
+    .where(
+      and(
+        eq(schema.pushSubscriptions.userId, user.id),
+        eq(schema.pushSubscriptions.endpoint, endpoint),
+      ),
+    );
+  revalidateAll();
+  return { ok: true };
+}
+
+// ---------------------------------------------------------------------------
+// Meals & groceries
+// ---------------------------------------------------------------------------
+
+function uniqueNames(values: string[]): string[] {
+  const seen = new Set<string>();
+  const result: string[] = [];
+  for (const value of values) {
+    const name = value.trim().replace(/\s+/g, " ").slice(0, 120);
+    const key = name.toLocaleLowerCase("en-SG");
+    if (!name || seen.has(key)) continue;
+    seen.add(key);
+    result.push(name);
+  }
+  return result;
+}
+
+export async function createRecipe(formData: FormData) {
+  const title = String(formData.get("title") ?? "").trim().slice(0, 120);
+  const ingredients = uniqueNames(
+    String(formData.get("ingredients") ?? "").split(/[\n,]+/),
+  );
+  const linkRaw = String(formData.get("link") ?? "").trim();
+  if (!title || ingredients.length === 0) return;
+
+  let link: string | undefined;
+  if (linkRaw) {
+    try {
+      const url = new URL(linkRaw);
+      if (url.protocol !== "http:" && url.protocol !== "https:") return;
+      link = url.toString();
+    } catch {
+      return;
+    }
+  }
+
+  const user = await getCurrentUser();
+  const db = await getDb();
+  await db.insert(schema.items).values({
+    userId: user.id,
+    module: "meals",
+    type: "recipe",
+    title,
+    payload: { ingredients, ...(link ? { link } : {}) },
+  });
+  revalidateAll();
+}
+
+export async function saveMealPlan(formData: FormData) {
+  const user = await getCurrentUser();
+  const db = await getDb();
+  const weekStart = weekStartKey(todayKey());
+  const selected = mealPlanDays(weekStart)
+    .map((day) => [day, String(formData.get(`meal-${day}`) ?? "").trim()] as const)
+    .filter(([, value]) => Boolean(value));
+
+  const requestedIds = [...new Set(selected.map(([, value]) => value))];
+  const recipeRows = requestedIds.length
+    ? await db
+        .select({ id: schema.items.id })
+        .from(schema.items)
+        .where(
+          and(
+            eq(schema.items.userId, user.id),
+            eq(schema.items.module, "meals"),
+            eq(schema.items.type, "recipe"),
+            eq(schema.items.status, "active"),
+            inArray(schema.items.id, requestedIds),
+          ),
+        )
+    : [];
+  const ownedRecipeIds = new Set(recipeRows.map((row) => row.id));
+  const days = Object.fromEntries(
+    selected
+      .filter(([, value]) => ownedRecipeIds.has(value))
+      .map(([day, dinner]) => [day, { dinner }]),
+  );
+
+  const existing = await getMealPlanForWeek(user.id, weekStart);
+  if (existing) {
+    await db
+      .update(schema.items)
+      .set({ payload: { days }, updatedAt: new Date() })
+      .where(
+        and(
+          eq(schema.items.id, existing.itemId),
+          eq(schema.items.userId, user.id),
+        ),
+      );
+  } else {
+    await db.insert(schema.items).values({
+      userId: user.id,
+      module: "meals",
+      type: "plan",
+      title: weekStart,
+      payload: { days },
+    });
+  }
+  revalidateAll();
+}
+
+async function writeGroceryList(userId: string, items: GroceryItem[]) {
+  const db = await getDb();
+  const existing = await getActiveGroceryList(userId);
+  if (existing) {
+    await db
+      .update(schema.items)
+      .set({ payload: { items }, updatedAt: new Date() })
+      .where(
+        and(eq(schema.items.id, existing.itemId), eq(schema.items.userId, userId)),
+      );
+    return existing.itemId;
+  }
+  const [created] = await db
+    .insert(schema.items)
+    .values({
+      userId,
+      module: "meals",
+      type: "grocery",
+      title: "Groceries",
+      payload: { items },
+    })
+    .returning();
+  return created.id;
+}
+
+async function appendGroceryItem(userId: string, name: string) {
+  const cleanName = uniqueNames([name])[0];
+  if (!cleanName) return;
+  const existing = await getActiveGroceryList(userId);
+  const current = existing?.items ?? [];
+  if (current.some((item) => item.name.toLocaleLowerCase("en-SG") === cleanName.toLocaleLowerCase("en-SG"))) return;
+  await writeGroceryList(userId, [...current, { name: cleanName, done: false }]);
+}
+
+export async function generateGroceryList() {
+  const user = await getCurrentUser();
+  const db = await getDb();
+  const plan = await getMealPlanForWeek(user.id, weekStartKey(todayKey()));
+  if (!plan) return;
+
+  const recipeIds = [
+    ...new Set(
+      Object.values(plan.days)
+        .map((day) => day.dinner)
+        .filter((value): value is string => Boolean(value)),
+    ),
+  ];
+  const recipes = recipeIds.length
+    ? await db
+        .select({ id: schema.items.id, payload: schema.items.payload })
+        .from(schema.items)
+        .where(
+          and(
+            eq(schema.items.userId, user.id),
+            eq(schema.items.module, "meals"),
+            eq(schema.items.type, "recipe"),
+            inArray(schema.items.id, recipeIds),
+          ),
+        )
+    : [];
+  const generated = uniqueNames(
+    recipes.flatMap((recipe) => {
+      const payload = recipe.payload as Partial<RecipePayload>;
+      return Array.isArray(payload.ingredients) ? payload.ingredients : [];
+    }),
+  );
+  const existing = await getActiveGroceryList(user.id);
+  const doneByName = new Map(
+    (existing?.items ?? []).map((item) => [
+      item.name.toLocaleLowerCase("en-SG"),
+      item.done,
+    ]),
+  );
+  await writeGroceryList(
+    user.id,
+    generated.map((name) => ({
+      name,
+      done: doneByName.get(name.toLocaleLowerCase("en-SG")) ?? false,
+    })),
+  );
+  revalidateAll();
+}
+
+export async function toggleGroceryItem(formData: FormData) {
+  const itemId = String(formData.get("itemId") ?? "");
+  const index = Number(formData.get("index"));
+  if (!itemId || !Number.isInteger(index) || index < 0) return;
+  const user = await getCurrentUser();
+  const db = await getDb();
+  const [row] = await db
+    .select()
+    .from(schema.items)
+    .where(
+      and(
+        eq(schema.items.id, itemId),
+        eq(schema.items.userId, user.id),
+        eq(schema.items.module, "meals"),
+        eq(schema.items.type, "grocery"),
+        eq(schema.items.status, "active"),
+      ),
+    )
+    .limit(1);
+  if (!row) return;
+  const payload = row.payload as { items?: GroceryItem[] };
+  if (!Array.isArray(payload.items) || index >= payload.items.length) return;
+  const items = payload.items.map((item, itemIndex) =>
+    itemIndex === index ? { ...item, done: !item.done } : item,
+  );
+  await db
+    .update(schema.items)
+    .set({ payload: { items }, updatedAt: new Date() })
+    .where(eq(schema.items.id, row.id));
+  revalidateAll();
+}
+
 // Quick Capture v2: one input, many destinations (src/lib/capture.ts).
 export async function quickCapture(formData: FormData) {
   const parsed = parseCapture(String(formData.get("text") ?? ""));
@@ -469,6 +790,9 @@ export async function quickCapture(formData: FormData) {
       break;
     case "workout":
       await insertHealth(user.id, "workout", parsed.minutes, parsed.note);
+      break;
+    case "grocery":
+      await appendGroceryItem(user.id, parsed.name);
       break;
     case "task": {
       const dueKey =

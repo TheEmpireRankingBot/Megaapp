@@ -48,7 +48,15 @@ export const items = pgTable(
       .notNull()
       .defaultNow(),
   },
-  (t) => [index("items_user_module_idx").on(t.userId, t.module)],
+  (t) => [
+    index("items_user_module_idx").on(t.userId, t.module),
+    index("items_user_module_type_status_idx").on(
+      t.userId,
+      t.module,
+      t.type,
+      t.status,
+    ),
+  ],
 );
 
 // The universal timestamped log record: a habit check-in, an expense,
@@ -76,6 +84,12 @@ export const entries = pgTable(
   },
   (t) => [
     index("entries_user_occurred_idx").on(t.userId, t.occurredAt),
+    index("entries_user_module_type_occurred_idx").on(
+      t.userId,
+      t.module,
+      t.type,
+      t.occurredAt,
+    ),
     index("entries_item_idx").on(t.itemId),
   ],
 );
@@ -139,6 +153,32 @@ export const reminders = pgTable(
       .defaultNow(),
   },
   (t) => [index("reminders_next_fire_idx").on(t.nextFireAt)],
+);
+
+// Browser endpoints used by the Web Push delivery channel. A subscription is
+// tied to one authenticated user and one browser profile/device.
+export const pushSubscriptions = pgTable(
+  "push_subscriptions",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    endpoint: text("endpoint").notNull(),
+    p256dh: text("p256dh").notNull(),
+    auth: text("auth").notNull(),
+    userAgent: text("user_agent"),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => [
+    unique("push_subscriptions_endpoint_uq").on(t.endpoint),
+    index("push_subscriptions_user_idx").on(t.userId),
+  ],
 );
 
 // ---------------------------------------------------------------------------

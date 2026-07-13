@@ -16,7 +16,7 @@ Verification = scripted browser runs in `scripts/e2e/` against a running server 
 
 ## Architecture in one paragraph
 
-Async server components read via `src/lib/*.ts` query helpers; **all writes are server actions in `src/lib/actions.ts`** called from plain `<form action={...}>` — no client-side mutation code, and the only client components are in `src/components/nav.tsx`. Data lives on shared primitives (`items` = things, `entries` = timestamped logs, plus `tags`/`reminders`), with dedicated tables only for `tasks`, `habits`, `transactions`. The `(module, type)` registry in `docs/HANDOVER.md` §3 is the source of truth for payload shapes — extend it when you add types.
+Async server components read via `src/lib/*.ts` query helpers; **all domain writes are server actions in `src/lib/actions.ts`** called from plain `<form action={...}>`; Supabase login/logout is the sole exception in `src/lib/auth-actions.ts`. There is no client-side mutation code, and the only client components are in `src/components/nav.tsx`. Data lives on shared primitives (`items` = things, `entries` = timestamped logs, plus `tags`/`reminders`), with dedicated tables only for `tasks`, `habits`, `transactions`. The `(module, type)` registry in `docs/HANDOVER.md` §3 is the source of truth for payload shapes — extend it when you add types.
 
 ## Hard rules
 

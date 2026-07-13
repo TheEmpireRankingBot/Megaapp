@@ -6,7 +6,7 @@ The complete context needed to build on this codebase without guessing. Written 
 
 ---
 
-## 1. Current state (as of 2026-07-12)
+## 1. Current state (as of 2026-07-13)
 
 | Area | Status |
 |---|---|
@@ -15,13 +15,14 @@ The complete context needed to build on this codebase without guessing. Written 
 | Phase 1 daily loop | ✅ merged — tasks, habits + streaks, journal + mood, Today ring |
 | Phase 2 | ✅ merged — Quick Capture v2, Money (budget), Health (trends) |
 | Subscriptions | ✅ merged — renewal tracking, Paid flow, Today strip |
-| Weekly review | ✅ built & verified — PR #2 (open) |
-| Deployment | ❌ not deployed; README §Deploy has the Vercel+Supabase steps |
-| Auth | ❌ single-user stand-in (see §6 swap point) |
-| Notifications | ❌ `reminders` table is populated but nothing consumes it yet |
+| Weekly review | ✅ merged & verified — PR #2 |
+| Meals & groceries | ✅ built & verified — recipes, weekly dinner plan, generated grocery list, `buy` capture |
+| Deployment | ⚠️ Vercel project exists, but local Meals/Auth/Notifications work still needs committing and pushing |
+| Auth | ✅ optional Supabase SSR magic-link auth; zero-config local fallback retained |
+| Notifications | ✅ Web Push opt-in, due reminders, evening streak risk, weekend review, secured cron |
 | Tests | Scripted browser verification only (`scripts/e2e/`), no unit test framework |
 
-Working branch: `claude/lifestyle-app-planning-f922je`. Owner's locale defaults: Singapore time, SGD, metric.
+Working branch: `main` (local changes are not yet committed/pushed). Owner's locale defaults: Singapore time, SGD, metric.
 
 ## 2. Stack & architecture
 
@@ -40,18 +41,25 @@ src/db/schema.ts        all tables (Drizzle, pg dialect)
 src/db/index.ts         getDb() driver switch + PGlite automigrate
 drizzle/                generated SQL migrations (never hand-edit)
 src/lib/dates.ts        THE ONLY place for day/timezone logic (SG, fixed +08:00)
-src/lib/user.ts         getCurrentUser() — the auth swap point
+src/lib/user.ts         getCurrentUser() — Supabase session → users row; local fallback
+src/lib/supabase/       config + cookie-backed server client + Proxy refresh helper
+src/lib/auth-actions.ts magic-link request + sign-out server actions
+src/proxy.ts            Next.js 16 auth boundary; protects app routes when configured
 src/lib/actions.ts      every server action ("use server")
 src/lib/data.ts         tasks/habits/journal/Today queries + types
 src/lib/money.ts        expenses, budget, subscriptions queries; formatSGD; CATEGORIES
 src/lib/health.ts       health summary queries; WATER_GOAL_ML
 src/lib/review.ts       week math, week stats, review queries
+src/lib/meals.ts        recipes, weekly plan, active grocery list queries + types
+src/lib/notifications.ts VAPID delivery + expired endpoint cleanup
 src/lib/capture.ts      Quick Capture shorthand parser (pure, no IO)
 src/components/         nav, task-row, habit-row, journal-form, quick-capture,
                         quick-add-task (full form), progress-ring, sparkline
-src/app/<module>/page.tsx   today, tasks, habits, journal, money, health, review
+src/app/<module>/page.tsx   today, tasks, habits, journal, money, health, review, meals
 src/app/api/export/route.ts
-scripts/e2e/            scripted browser verification (see §5)
+src/app/api/cron/notifications/route.ts
+public/sw.js             notification display/click service worker
+scripts/e2e/            scripted browser verification (see §5; 05 covers meals)
 ```
 
 ## 3. Data model — exact shapes
@@ -64,7 +72,8 @@ Core rule: **start every feature on `items` (things) + `entries` (timestamped lo
 - `items` — universal "thing". Discriminated by `(module, type)`.
 - `entries` — universal timestamped log. Discriminated by `(module, type)`; `value numeric` for the numeric reading, `note text`, `payload jsonb` for the rest, optional `itemId` link.
 - `tags`, `item_tags`, `entry_tags` — global tagging (schema exists; no UI yet).
-- `reminders` — one scheduling system for all modules. Populated by subscriptions; nothing consumes it yet.
+- `reminders` — one scheduling system for all modules. Subscription renewals are consumed by the notification cron.
+- `push_subscriptions` — one VAPID browser endpoint per user/device; encryption keys never appear in exports.
 - `tasks`, `habits` — 1:1 extensions of an `items` row (`itemId` unique FK).
 - `transactions` — 1:1 extension of an expense `entries` row.
 
@@ -81,6 +90,10 @@ Core rule: **start every feature on `items` (things) + `entries` (timestamped lo
 | money | subscription (items) | items (+reminders) | — | `{ amount, cadence: "monthly"\|"yearly", nextRenewalKey, category }` | — |
 | health | weight / sleep / water / workout (entries) | entries | kg / hours / ml / minutes-or-null | `{}` | — |
 | review | weekly (entries) | entries | — | `{ weekStart, wins, challenges, focus }` | — |
+| meals | recipe (items) | items | — | `{ ingredients: string[], link?: string }` | — |
+| meals | plan (items) | items | — | `{ days: Record<dayKey, { dinner?: recipeItemId }> }` | — |
+| meals | grocery (items) | items | — | `{ items: { name: string, done: boolean }[] }` | — |
+| notifications | sent (entries) | entries | — | `{ key, tag }` | — |
 
 Semantics that matter:
 
@@ -93,7 +106,7 @@ Semantics that matter:
 ## 4. Conventions (follow these exactly)
 
 1. **Dates**: all day math goes through `src/lib/dates.ts`. Day keys are `YYYY-MM-DD` strings in **Asia/Singapore** (fixed `+08:00`, no DST). Never do timezone/day arithmetic anywhere else. Date-only stamps use `dayNoon()`; ranges use `dayStart()`/`dayEnd()`.
-2. **Server actions** (`src/lib/actions.ts`): exported async functions taking `FormData`; validate inputs and **silently return on bad input** (no throws for user input); always scope by `user.id`; always call `revalidateAll()` (which revalidates every module path) after a write. Add new module paths to `MODULE_PATHS`.
+2. **Server actions** (`src/lib/actions.ts`): exported async functions taking `FormData`; validate inputs and **silently return on bad input** (no throws for user input); always scope by `user.id`; always call `revalidateAll()` (which revalidates every module path) after a write. Add new module paths to `MODULE_PATHS`. Supabase login/logout actions live separately in `auth-actions.ts` because they mutate Auth cookies, not domain data.
 3. **Every query is scoped by `userId`** even though there's one user — this is what makes the auth swap (§6) a one-file change.
 4. **Styling idiom** (no shadcn yet — don't introduce it casually): neutral tokens via opacity — `border-black/10 dark:border-white/10`, muted text `text-black/50 dark:text-white/50`, hover `hover:bg-black/[.03] dark:hover:bg-white/[.04]`. Cards `rounded-xl border p-4`, inputs `rounded-lg`. Meaning colors: **emerald** = success/done, **amber** = warning/upcoming, **red** = danger/overdue/priority, **sky** = water only. Icons: `lucide-react`, size 14–20. Section headers: `text-sm font-semibold uppercase tracking-wide text-black/50`.
 5. **Pages** that read the DB declare `export const dynamic = "force-dynamic"` and fetch in parallel with `Promise.all`.
@@ -119,8 +132,9 @@ npm run db:migrate     # against real Postgres (DATABASE_URL)
 
 ## 6. Known gaps, gotchas, and how to fix them
 
-- **Auth (the big one).** `src/lib/user.ts # getCurrentUser()` seeds/returns a single user. To add Supabase Auth: authenticate via `@supabase/ssr` middleware, map the Supabase user id/email onto the `users` row (create on first login), and reimplement `getCurrentUser()` from the session. Everything else already scopes by `userId`. Until auth lands, **a deployed instance is open to anyone with the URL** (README §Deploy warns about this).
-- **Reminders have no delivery channel.** Subscriptions write `reminders` rows (`schedule` = cadence, `nextFireAt` = renewal midnight). The intended consumer is web push (see §7.3).
+- **Auth requires deployment configuration.** The code is complete, but protection activates only when the Supabase URL and publishable/anon key are present. Configure the Site URL, redirect allow-list, and SSR token-hash Magic Link template exactly as documented in README §Deploy. Partial configuration fails closed with an explicit server error; only omitting both variables enables local fallback.
+- **Web Push requires deployment variables.** Set both VAPID keys, `VAPID_SUBJECT`, and `CRON_SECRET`; without a complete set the Today opt-in stays hidden and the cron returns 503. The default Hobby-compatible cron runs nightly at 21:00 SG. Morning brief logic exists but needs an additional scheduler invocation on a plan that permits it.
+- **Function/database region affects responsiveness.** The dashboard query waterfalls are parallelized and common filters indexed, but Vercel Functions must still be set to the Supabase database region in Vercel Settings → Functions.
 - **Monthly recurrence** uses `setUTCMonth+1` on the noon stamp — end-of-month dates drift (Jan 31 → Mar 3). Acceptable so far; fix by clamping to month end if it bothers anyone.
 - **`formatDay`** omits the year — dates >6 months out (yearly renewals) display without year context.
 - **iOS PWA icon**: manifest icon is SVG; add PNG `apple-touch-icon` sizes for iOS.
@@ -134,25 +148,26 @@ npm run db:migrate     # against real Postgres (DATABASE_URL)
 
 Each spec follows the house pattern: data on the primitives, queries in `src/lib/<module>.ts`, actions in `actions.ts`, RSC page, e2e script, export coverage, and a "done when" gate.
 
-### 7.1 Meals & groceries (plan Phase 3)
+### 7.1 Meals & groceries (plan Phase 3) — shipped 2026-07-12
 
-- **Data**: recipe = `items(module:"meals", type:"recipe", title, payload:{ ingredients: string[], link?: string })`. Meal plan = `items(module:"meals", type:"plan", title=weekStart, payload:{ days: Record<dayKey, { dinner?: string /* recipe itemId or free text */ }> })`, one per week (upsert like review). Grocery list = `items(module:"meals", type:"grocery", payload:{ items: { name: string, done: boolean }[] })`, one active at a time.
-- **UI** `/meals` (desktopOnly nav + Today link on Sundays next to review): recipe box (add/delete), week grid Mon–Sun assigning recipes, "Generate grocery list" button that unions ingredients of planned recipes (dedupe by lowercase name) into the grocery list; checkable list items.
-- **Capture**: `buy milk` → append to active grocery list (extend `capture.ts` with `buy ` prefix).
-- **Done when**: plan a week, generate the list, tick items off on a phone-width viewport, all through the UI.
+- **Shipped**: `/meals` has recipe add/delete, the current Mon–Sun dinner plan, ingredient-deduped grocery generation, and a checkable active list. It is desktop-only in navigation and linked from Today on Sundays.
+- **Capture**: `buy milk` appends to the active grocery list, creating it if needed and avoiding case-insensitive duplicates.
+- **Retention hook**: one Sunday plan becomes one reusable shopping list; the list shows picked-up progress and a completion nudge.
+- **Verified**: `scripts/e2e/05-meals-groceries.mjs` exercises the complete UI at desktop and 390px, Quick Capture, deduplication, toggling, and JSON export.
 
-### 7.2 Supabase Auth (unlocks safe deployment)
+### 7.2 Supabase Auth — shipped 2026-07-12
 
-- `@supabase/ssr` + middleware guarding all routes except `/login`; email magic-link is enough for v1.
-- Map session → `users` row by email (create on first login); rewrite `getCurrentUser()`; delete the seeding path.
-- Env: `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY` (+ `DATABASE_URL` already supported). Local dev without env vars keeps the current single-user behavior (feature-flag on env presence) so PGlite dev stays zero-config.
-- **Done when**: deployed instance requires login; local dev still works with no env vars.
+- `@supabase/ssr` + Next.js 16 `proxy.ts` guard every app/API route except `/login`, `/auth/*`, and static PWA assets. The boundary verifies JWTs with `getClaims()`; server data access revalidates the user with `getUser()`.
+- Magic-link request, PKCE callback, token-hash confirmation, sign-out, and session-to-`users` email mapping are implemented. First login creates the app user row safely under the email unique constraint.
+- Env: `NEXT_PUBLIC_SUPABASE_URL` plus `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` (or legacy `NEXT_PUBLIC_SUPABASE_ANON_KEY`), alongside `DATABASE_URL`. No auth env vars preserves PGlite + the local seeded user.
+- **Verified**: the full local browser suite still passes without env vars; `06-auth-boundary.mjs` proves configured unauthenticated requests redirect to login and static PWA assets remain public. A real email round trip requires the owner's Supabase project configuration.
 
-### 7.3 Notifications (the biggest stickiness lever, needs deployment first)
+### 7.3 Notifications — shipped locally 2026-07-13
 
-- Web Push (VAPID) + service worker; store push subscriptions per user (new `push_subscriptions` table — remember export).
-- A scheduled route (Vercel cron) runs a few times daily: fires due `reminders` rows, plus computed nudges — evening "streak at risk" (habit unchecked by ~21:00 SG with `streakCurrent >= 3`), morning brief, weekend review prompt. Every send advances/clears its reminder.
-- **Done when**: a phone gets a streak-at-risk push while its streak is genuinely at risk.
+- Web Push (VAPID) + service worker stores one subscription per authenticated browser. The export contains endpoint metadata but deliberately omits encryption keys.
+- `/api/cron/notifications` requires Vercel's `CRON_SECRET`, prunes expired endpoints, fires and advances due reminders, logs computed sends in `entries`, and deduplicates daily/weekly nudges.
+- The committed Hobby-compatible cron runs nightly at 21:00 SG for streak risk and weekend review. Morning brief delivery is implemented for schedulers that call the same route during 06:00–10:00 SG.
+- **Verification**: `07-notifications.mjs` covers the mobile opt-in boundary, public service worker, cron authorization, empty delivery run, and export shape. A real phone push remains the production gate after VAPID deployment.
 
 ### 7.4 Insights (plan Phase 5 — data is already accumulating)
 

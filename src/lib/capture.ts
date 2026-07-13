@@ -7,6 +7,7 @@
 //   sleep 7.5 / sleep 7h30 → sleep log (hours)
 //   water 500 / water 2l   → water log (ml)
 //   run 5km 30min / gym    → workout log
+//   buy milk               → active grocery list
 //   todo call mum tomorrow → task with due date
 //   anything else          → task due today
 
@@ -16,6 +17,7 @@ export type Captured =
   | { kind: "sleep"; hours: number }
   | { kind: "water"; ml: number }
   | { kind: "workout"; note: string; minutes: number | null }
+  | { kind: "grocery"; name: string }
   | { kind: "task"; title: string; due: "today" | "tomorrow" | null; priority: number };
 
 const WORKOUT_WORDS = /^(gym|run|running|walk|swim|yoga|lift|workout|cycle|hike)\b/i;
@@ -71,6 +73,13 @@ export function parseCapture(raw: string): Captured | null {
       note: text,
       minutes: minutes ? Number(minutes[1]) : null,
     };
+  }
+
+  const grocery = text.match(/^buy\s+(.+)$/i);
+  if (grocery) {
+    const name = grocery[1].trim();
+    if (!name) return null;
+    return { kind: "grocery", name };
   }
 
   let title = text.replace(/^todo\s+/i, "");

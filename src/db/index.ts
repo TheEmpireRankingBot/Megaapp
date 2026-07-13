@@ -20,7 +20,15 @@ const globalForDb = globalThis as unknown as {
 async function createDb(): Promise<Database> {
   const url = process.env.DATABASE_URL;
   if (url) {
-    return drizzlePostgres(postgres(url, { prepare: false }), { schema });
+    return drizzlePostgres(
+      postgres(url, {
+        prepare: false,
+        max: 3,
+        connect_timeout: 10,
+        idle_timeout: 20,
+      }),
+      { schema },
+    );
   }
   const client = new PGlite(path.join(process.cwd(), ".pglite"));
   const db = drizzlePglite(client, { schema });

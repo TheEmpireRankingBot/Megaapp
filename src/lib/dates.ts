@@ -79,3 +79,18 @@ export function lastNDays(n: number): string[] {
   const today = todayKey();
   return Array.from({ length: n }, (_, i) => addDays(today, i - (n - 1)));
 }
+
+export function isSunday(key: string = todayKey()): boolean {
+  return dayNoon(key).getUTCDay() === 0;
+}
+
+/** Current hour (0-23) in Singapore, used by scheduled notification windows. */
+export function singaporeHour(d: Date = new Date()): number {
+  return Number(
+    new Intl.DateTimeFormat("en-SG", {
+      timeZone: TIMEZONE,
+      hour: "numeric",
+      hour12: false,
+    }).format(d),
+  );
+}

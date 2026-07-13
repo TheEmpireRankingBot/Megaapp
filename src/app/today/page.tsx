@@ -3,11 +3,14 @@ import { getCurrentUser } from "@/lib/user";
 import { getTodayData, MOODS } from "@/lib/data";
 import { formatSGD, getSubscriptions } from "@/lib/money";
 import { getReviewForWeek, reviewDue, weekStartKey } from "@/lib/review";
-import { TIMEZONE, todayKey } from "@/lib/dates";
+import { isSunday, TIMEZONE, todayKey } from "@/lib/dates";
 import { ProgressRing } from "@/components/progress-ring";
 import { TaskRow } from "@/components/task-row";
 import { HabitRow } from "@/components/habit-row";
 import { QuickCapture } from "@/components/quick-capture";
+import { signOut } from "@/lib/auth-actions";
+import { isSupabaseConfigured } from "@/lib/supabase/config";
+import { NotificationControl } from "@/components/notification-control";
 
 export const metadata = { title: "Today" };
 export const dynamic = "force-dynamic";
@@ -38,6 +41,8 @@ export default async function TodayPage() {
   const { taskGroups, habits, journal, score } = data;
   const renewingSoon = subs.list.filter((s) => s.daysUntil <= 7);
   const promptReview = reviewDue() && !weekReview;
+  const promptMealPlan = isSunday();
+  const vapidPublicKey = process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY?.trim() ?? "";
 
   const now = new Date();
   const hour = Number(
@@ -75,10 +80,26 @@ export default async function TodayPage() {
             {nudge(score.done, score.total)}
           </p>
         </div>
-        <ProgressRing done={score.done} total={score.total} />
+        <div className="flex items-center gap-3">
+          {isSupabaseConfigured() && (
+            <form action={signOut}>
+              <button
+                type="submit"
+                className="text-xs text-black/45 underline-offset-2 hover:underline dark:text-white/45"
+              >
+                Sign out
+              </button>
+            </form>
+          )}
+          <ProgressRing done={score.done} total={score.total} />
+        </div>
       </header>
 
       <QuickCapture />
+
+      {vapidPublicKey && (
+        <NotificationControl vapidPublicKey={vapidPublicKey} />
+      )}
 
       {promptReview && (
         <Link
@@ -89,6 +110,18 @@ export default async function TodayPage() {
           <span className="text-black/50 dark:text-white/50">
             — your weekly review is drafted from this week&apos;s data, just add
             three thoughts →
+          </span>
+        </Link>
+      )}
+
+      {promptMealPlan && (
+        <Link
+          href="/meals"
+          className="block rounded-xl border border-black/10 px-4 py-3 text-sm transition-colors hover:bg-black/[.02] dark:border-white/10 dark:hover:bg-white/[.03]"
+        >
+          <span className="font-medium">🍽️ Plan the week&apos;s dinners</span>{" "}
+          <span className="text-black/50 dark:text-white/50">
+            — choose seven meals and turn them into one grocery list →
           </span>
         </Link>
       )}

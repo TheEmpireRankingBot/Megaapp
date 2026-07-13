@@ -4,6 +4,7 @@
   "description": "One app for your whole life.",
   "start_url": "/today",
   "display": "standalone",
+  "scope": "/",
   "background_color": "#0a0a0a",
   "theme_color": "#0a0a0a",
   "icons": [
