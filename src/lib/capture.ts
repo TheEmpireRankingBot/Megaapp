@@ -18,6 +18,7 @@ export type Captured =
   | { kind: "water"; ml: number }
   | { kind: "workout"; note: string; minutes: number | null }
   | { kind: "grocery"; name: string }
+  | { kind: "media"; title: string; mediaKind: "book" | "movie" }
   | { kind: "task"; title: string; due: "today" | "tomorrow" | null; priority: number };
 
 const WORKOUT_WORDS = /^(gym|run|running|walk|swim|yoga|lift|workout|cycle|hike)\b/i;
@@ -80,6 +81,16 @@ export function parseCapture(raw: string): Captured | null {
     const name = grocery[1].trim();
     if (!name) return null;
     return { kind: "grocery", name };
+  }
+
+  const read = text.match(/^read\s+(.+)$/i);
+  if (read?.[1].trim()) {
+    return { kind: "media", title: read[1].trim(), mediaKind: "book" };
+  }
+
+  const watch = text.match(/^watch\s+(.+)$/i);
+  if (watch?.[1].trim()) {
+    return { kind: "media", title: watch[1].trim(), mediaKind: "movie" };
   }
 
   let title = text.replace(/^todo\s+/i, "");

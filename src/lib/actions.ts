@@ -12,6 +12,7 @@ import {
   nextDueKey,
   nextRenewalKey,
   todayKey,
+  zonedDateTime,
 } from "@/lib/dates";
 import { computeCurrentStreak } from "@/lib/data";
 import { parseCapture } from "@/lib/capture";
@@ -24,6 +25,15 @@ import {
 } from "@/lib/meals";
 import { weekStartKey } from "@/lib/review";
 import { sendPush } from "@/lib/notifications";
+import type { CalendarEventPayload } from "@/lib/calendar";
+import type { GoalPayload } from "@/lib/goals";
+import {
+  MEDIA_KINDS,
+  MEDIA_STATES,
+  type MediaKind,
+  type MediaPayload,
+  type MediaState,
+} from "@/lib/lists";
 
 const MODULE_PATHS = [
   "/today",
@@ -34,6 +44,11 @@ const MODULE_PATHS = [
   "/health",
   "/review",
   "/meals",
+  "/insights",
+  "/calendar",
+  "/goals",
+  "/lists",
+  "/search",
 ];
 function revalidateAll() {
   for (const p of MODULE_PATHS) revalidatePath(p);
@@ -768,6 +783,214 @@ export async function toggleGroceryItem(formData: FormData) {
   revalidateAll();
 }
 
+// ---------------------------------------------------------------------------
+// Calendar, goals, and lists — planning views over the shared items table.
+// ---------------------------------------------------------------------------
+
+export async function createCalendarEvent(formData: FormData) {
+  const title = String(formData.get("title") ?? "").trim().slice(0, 200);
+  const date = String(formData.get("date") ?? "");
+  const allDay = formData.get("allDay") === "on";
+  const startTime = String(formData.get("startTime") ?? "");
+  const endTime = String(formData.get("endTime") ?? "");
+  if (!title || !/^\d{4}-\d{2}-\d{2}$/.test(date)) return;
+  if (!allDay && !/^\d{2}:\d{2}$/.test(startTime)) return;
+  if (endTime && !/^\d{2}:\d{2}$/.test(endTime)) return;
+
+  const start = allDay ? dayStart(date) : zonedDateTime(date, startTime);
+  const end = allDay ? dayEnd(date) : endTime ? zonedDateTime(date, endTime) : null;
+  if (Number.isNaN(start.getTime()) || (end && (Number.isNaN(end.getTime()) || end <= start))) return;
+
+  const location = String(formData.get("location") ?? "").trim().slice(0, 200);
+  const notes = String(formData.get("notes") ?? "").trim().slice(0, 2_000);
+  const payload: CalendarEventPayload = {
+    startAt: start.toISOString(),
+    endAt: end?.toISOString(),
+    allDay,
+    location: location || undefined,
+    notes: notes || undefined,
+  };
+  const user = await getCurrentUser();
+  const db = await getDb();
+  await db.insert(schema.items).values({
+    userId: user.id,
+    module: "calendar",
+    type: "event",
+    title,
+    payload,
+  });
+  revalidateAll();
+}
+
+export async function createGoal(formData: FormData) {
+  const title = String(formData.get("title") ?? "").trim().slice(0, 200);
+  const horizonRaw = String(formData.get("horizon") ?? "quarter");
+  const horizon =
+    horizonRaw === "month" || horizonRaw === "quarter" || horizonRaw === "year"
+      ? horizonRaw
+      : null;
+  const targetDate = String(formData.get("targetDate") ?? "");
+  if (!title || !horizon || (targetDate && !/^\d{4}-\d{2}-\d{2}$/.test(targetDate))) return;
+
+  const user = await getCurrentUser();
+  const db = await getDb();
+  const requestedIds = [
+    ...new Set(
+      formData
+        .getAll("linkedItemId")
+        .map(String)
+        .filter(Boolean),
+    ),
+  ].slice(0, 50);
+  const ownedLinks = requestedIds.length
+    ? await db
+        .select({ id: schema.items.id })
+        .from(schema.items)
+        .where(
+          and(
+            eq(schema.items.userId, user.id),
+            inArray(schema.items.id, requestedIds),
+            inArray(schema.items.module, ["tasks", "habits"]),
+          ),
+        )
+    : [];
+  const milestones = String(formData.get("milestones") ?? "")
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .slice(0, 20)
+    .map((milestone, index) => ({
+      id: `${Date.now().toString(36)}-${index}`,
+      title: milestone.slice(0, 200),
+      done: false,
+    }));
+  const payload: GoalPayload = {
+    horizon,
+    targetDate: targetDate || undefined,
+    linkedItemIds: ownedLinks.map((item) => item.id),
+    milestones,
+  };
+  await db.insert(schema.items).values({
+    userId: user.id,
+    module: "goals",
+    type: "goal",
+    title,
+    payload,
+  });
+  revalidateAll();
+}
+
+export async function toggleGoalMilestone(formData: FormData) {
+  const itemId = String(formData.get("itemId") ?? "");
+  const milestoneId = String(formData.get("milestoneId") ?? "");
+  if (!itemId || !milestoneId) return;
+  const user = await getCurrentUser();
+  const db = await getDb();
+  const [row] = await db
+    .select()
+    .from(schema.items)
+    .where(
+      and(
+        eq(schema.items.id, itemId),
+        eq(schema.items.userId, user.id),
+        eq(schema.items.module, "goals"),
+        eq(schema.items.type, "goal"),
+      ),
+    )
+    .limit(1);
+  if (!row) return;
+  const payload = row.payload as GoalPayload;
+  if (!Array.isArray(payload.milestones)) return;
+  const milestones = payload.milestones.map((milestone) =>
+    milestone.id === milestoneId ? { ...milestone, done: !milestone.done } : milestone,
+  );
+  await db
+    .update(schema.items)
+    .set({ payload: { ...payload, milestones }, updatedAt: new Date() })
+    .where(eq(schema.items.id, row.id));
+  revalidateAll();
+}
+
+export async function createMediaItem(formData: FormData) {
+  const title = String(formData.get("title") ?? "").trim().slice(0, 200);
+  const kind = String(formData.get("kind") ?? "other") as MediaKind;
+  const notes = String(formData.get("notes") ?? "").trim().slice(0, 1_000);
+  if (!title || !MEDIA_KINDS.includes(kind)) return;
+  const user = await getCurrentUser();
+  const db = await getDb();
+  const payload: MediaPayload = {
+    kind,
+    state: "backlog",
+    notes: notes || undefined,
+  };
+  await db.insert(schema.items).values({
+    userId: user.id,
+    module: "lists",
+    type: "media",
+    title,
+    payload,
+  });
+  revalidateAll();
+}
+
+export async function updateMediaState(formData: FormData) {
+  const itemId = String(formData.get("itemId") ?? "");
+  const state = String(formData.get("state") ?? "") as MediaState;
+  if (!itemId || !MEDIA_STATES.includes(state)) return;
+  const user = await getCurrentUser();
+  const db = await getDb();
+  const [row] = await db
+    .select()
+    .from(schema.items)
+    .where(
+      and(
+        eq(schema.items.id, itemId),
+        eq(schema.items.userId, user.id),
+        eq(schema.items.module, "lists"),
+        eq(schema.items.type, "media"),
+      ),
+    )
+    .limit(1);
+  if (!row) return;
+  await db
+    .update(schema.items)
+    .set({
+      payload: { ...(row.payload as MediaPayload), state },
+      updatedAt: new Date(),
+    })
+    .where(eq(schema.items.id, row.id));
+  revalidateAll();
+}
+
+export async function rateMediaItem(formData: FormData) {
+  const itemId = String(formData.get("itemId") ?? "");
+  const rating = Number(formData.get("rating"));
+  if (!itemId || !Number.isInteger(rating) || rating < 1 || rating > 5) return;
+  const user = await getCurrentUser();
+  const db = await getDb();
+  const [row] = await db
+    .select()
+    .from(schema.items)
+    .where(
+      and(
+        eq(schema.items.id, itemId),
+        eq(schema.items.userId, user.id),
+        eq(schema.items.module, "lists"),
+        eq(schema.items.type, "media"),
+      ),
+    )
+    .limit(1);
+  if (!row) return;
+  await db
+    .update(schema.items)
+    .set({
+      payload: { ...(row.payload as MediaPayload), rating },
+      updatedAt: new Date(),
+    })
+    .where(eq(schema.items.id, row.id));
+  revalidateAll();
+}
+
 // Quick Capture v2: one input, many destinations (src/lib/capture.ts).
 export async function quickCapture(formData: FormData) {
   const parsed = parseCapture(String(formData.get("text") ?? ""));
@@ -793,6 +1016,15 @@ export async function quickCapture(formData: FormData) {
       break;
     case "grocery":
       await appendGroceryItem(user.id, parsed.name);
+      break;
+    case "media":
+      await db.insert(schema.items).values({
+        userId: user.id,
+        module: "lists",
+        type: "media",
+        title: parsed.title,
+        payload: { kind: parsed.mediaKind, state: "backlog" },
+      });
       break;
     case "task": {
       const dueKey =

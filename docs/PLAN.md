@@ -134,6 +134,8 @@ Rule of thumb: start every module on `items` + `entries`; promote to a dedicated
 
 Each phase is a usable vertical slice, roughly 2–4 weeks of part-time effort.
 
+**Current build (2026-07-13):** Phases 0–2 are complete. Phase 3 now includes meals, weekly review, local Calendar v1, and Goals v1. Web Push, Insights, Lists & Media, and global Search are also built. Google Calendar sync and the remaining Tier-4 modules are still open.
+
 ### Phase 0 — Foundation (week 1)
 Scaffold Next.js + Tailwind + Supabase + Drizzle; auth with a single account; core tables (`items`, `entries`, `tags`, `reminders`); app shell with navigation; deploy pipeline to Vercel; JSON export endpoint.
 **Done when:** you can log in on your phone and laptop and see an empty Today screen, and the whole thing redeploys on push.

@@ -3,7 +3,7 @@ import { getCurrentUser } from "@/lib/user";
 import { getTodayData, MOODS } from "@/lib/data";
 import { formatSGD, getSubscriptions } from "@/lib/money";
 import { getReviewForWeek, reviewDue, weekStartKey } from "@/lib/review";
-import { isSunday, TIMEZONE, todayKey } from "@/lib/dates";
+import { formatTime, isSunday, TIMEZONE, todayKey } from "@/lib/dates";
 import { ProgressRing } from "@/components/progress-ring";
 import { TaskRow } from "@/components/task-row";
 import { HabitRow } from "@/components/habit-row";
@@ -11,6 +11,8 @@ import { QuickCapture } from "@/components/quick-capture";
 import { signOut } from "@/lib/auth-actions";
 import { isSupabaseConfigured } from "@/lib/supabase/config";
 import { NotificationControl } from "@/components/notification-control";
+import { getPlanningBrief } from "@/lib/calendar";
+import { Search as SearchIcon } from "lucide-react";
 
 export const metadata = { title: "Today" };
 export const dynamic = "force-dynamic";
@@ -33,10 +35,11 @@ function nudge(done: number, total: number) {
 
 export default async function TodayPage() {
   const user = await getCurrentUser();
-  const [data, subs, weekReview] = await Promise.all([
+  const [data, subs, weekReview, planning] = await Promise.all([
     getTodayData(user.id),
     getSubscriptions(user.id),
     getReviewForWeek(user.id, weekStartKey(todayKey())),
+    getPlanningBrief(user.id),
   ]);
   const { taskGroups, habits, journal, score } = data;
   const renewingSoon = subs.list.filter((s) => s.daysUntil <= 7);
@@ -81,6 +84,13 @@ export default async function TodayPage() {
           </p>
         </div>
         <div className="flex items-center gap-3">
+          <Link
+            href="/search"
+            aria-label="Search Megaapp"
+            className="rounded-lg p-2 text-black/45 hover:bg-black/5 hover:text-black dark:text-white/45 dark:hover:bg-white/10 dark:hover:text-white"
+          >
+            <SearchIcon size={17} />
+          </Link>
           {isSupabaseConfigured() && (
             <form action={signOut}>
               <button
@@ -96,6 +106,53 @@ export default async function TodayPage() {
       </header>
 
       <QuickCapture />
+
+      <section className="space-y-2">
+        <div className="flex items-baseline justify-between">
+          <h2 className="text-sm font-semibold uppercase tracking-wide text-black/50 dark:text-white/50">
+            Agenda
+          </h2>
+          <Link href="/calendar" className="text-xs text-black/45 underline-offset-2 hover:underline dark:text-white/45">
+            calendar
+          </Link>
+        </div>
+        {planning.agenda.length === 0 ? (
+          <Link href="/calendar" className="block rounded-xl border border-dashed border-black/15 px-4 py-3 text-sm text-black/45 dark:border-white/15 dark:text-white/45">
+            Nothing scheduled today — add an event →
+          </Link>
+        ) : (
+          <div className="space-y-1">
+            {planning.agenda.slice(0, 3).map((event) => (
+              <Link key={event.itemId} href="/calendar" className="flex items-center gap-3 rounded-lg px-2 py-2 hover:bg-black/[.03] dark:hover:bg-white/[.04]">
+                <span className="w-16 shrink-0 text-xs font-medium tabular-nums text-black/50 dark:text-white/50">
+                  {event.allDay ? "All day" : formatTime(event.start)}
+                </span>
+                <span className="truncate text-sm font-medium">{event.title}</span>
+              </Link>
+            ))}
+          </div>
+        )}
+      </section>
+
+      {planning.topGoal && (
+        <Link href="/goals" className="block rounded-xl border border-black/10 p-4 transition-colors hover:bg-black/[.02] dark:border-white/10 dark:hover:bg-white/[.03]">
+          <div className="flex items-baseline justify-between gap-3">
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-wide text-black/45 dark:text-white/45">Current goal</p>
+              <p className="mt-1 font-medium">{planning.topGoal.title}</p>
+            </div>
+            <span className="text-sm font-semibold tabular-nums">
+              {planning.topGoal.done}/{planning.topGoal.total || 0}
+            </span>
+          </div>
+          <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-black/10 dark:bg-white/10">
+            <div
+              className="h-full rounded-full bg-emerald-500"
+              style={{ width: `${planning.topGoal.total ? (planning.topGoal.done / planning.topGoal.total) * 100 : 0}%` }}
+            />
+          </div>
+        </Link>
+      )}
 
       {vapidPublicKey && (
         <NotificationControl vapidPublicKey={vapidPublicKey} />
@@ -230,6 +287,28 @@ export default async function TodayPage() {
           </Link>
         )}
       </section>
+
+      <Link
+        href="/insights"
+        className="flex items-center justify-between rounded-xl border border-black/10 px-4 py-3 text-sm transition-colors hover:bg-black/[.02] dark:border-white/10 dark:hover:bg-white/[.03]"
+      >
+        <span>
+          <span className="font-medium">See what your data is revealing</span>{" "}
+          <span className="text-black/50 dark:text-white/50">— 12 weeks of patterns</span>
+        </span>
+        <span aria-hidden="true">→</span>
+      </Link>
+
+      <Link
+        href="/lists"
+        className="flex items-center justify-between rounded-xl border border-black/10 px-4 py-3 text-sm transition-colors hover:bg-black/[.02] dark:border-white/10 dark:hover:bg-white/[.03]"
+      >
+        <span>
+          <span className="font-medium">Choose what to read or watch next</span>{" "}
+          <span className="text-black/50 dark:text-white/50">— your backlog</span>
+        </span>
+        <span aria-hidden="true">→</span>
+      </Link>
     </div>
   );
 }

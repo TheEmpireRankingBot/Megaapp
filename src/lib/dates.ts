@@ -26,6 +26,11 @@ export function dayNoon(key: string): Date {
   return new Date(`${key}T12:00:00${TZ_OFFSET}`);
 }
 
+/** A wall-clock time on a Singapore calendar day. Callers validate HH:MM. */
+export function zonedDateTime(key: string, time: string): Date {
+  return new Date(`${key}T${time}:00${TZ_OFFSET}`);
+}
+
 export function addDays(key: string, n: number): string {
   const d = dayStart(key);
   d.setUTCDate(d.getUTCDate() + n);
@@ -78,6 +83,23 @@ export function formatDay(key: string): string {
 export function lastNDays(n: number): string[] {
   const today = todayKey();
   return Array.from({ length: n }, (_, i) => addDays(today, i - (n - 1)));
+}
+
+/** Compact date label for charts, e.g. "13 Jul". */
+export function formatCompactDay(key: string): string {
+  return dayNoon(key).toLocaleDateString("en-SG", {
+    timeZone: TIMEZONE,
+    day: "numeric",
+    month: "short",
+  });
+}
+
+export function formatTime(date: Date): string {
+  return new Intl.DateTimeFormat("en-SG", {
+    timeZone: TIMEZONE,
+    hour: "numeric",
+    minute: "2-digit",
+  }).format(date);
 }
 
 export function isSunday(key: string = todayKey()): boolean {

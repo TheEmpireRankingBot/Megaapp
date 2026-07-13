@@ -11,6 +11,11 @@ import {
   HeartPulse,
   CalendarCheck,
   Utensils,
+  ChartNoAxesCombined,
+  CalendarDays,
+  Target,
+  LibraryBig,
+  Search,
   type LucideIcon,
 } from "lucide-react";
 
@@ -30,13 +35,18 @@ const links: {
   { href: "/health", label: "Health", icon: HeartPulse },
   { href: "/review", label: "Review", icon: CalendarCheck, desktopOnly: true },
   { href: "/meals", label: "Meals", icon: Utensils, desktopOnly: true },
+  { href: "/insights", label: "Insights", icon: ChartNoAxesCombined, desktopOnly: true },
+  { href: "/calendar", label: "Calendar", icon: CalendarDays, desktopOnly: true },
+  { href: "/goals", label: "Goals", icon: Target, desktopOnly: true },
+  { href: "/lists", label: "Lists", icon: LibraryBig, desktopOnly: true },
+  { href: "/search", label: "Search", icon: Search, desktopOnly: true },
 ];
 
 export function Sidebar() {
   const pathname = usePathname();
   if (pathname.startsWith("/login") || pathname.startsWith("/auth")) return null;
   return (
-    <aside className="hidden md:flex w-56 shrink-0 flex-col gap-1 border-r border-black/10 dark:border-white/10 p-4">
+    <aside className="hidden md:flex w-56 shrink-0 flex-col gap-1 overflow-y-auto border-r border-black/10 p-4 dark:border-white/10">
       <Link href="/today" className="mb-4 px-3 text-lg font-bold tracking-tight">
         Megaapp
       </Link>

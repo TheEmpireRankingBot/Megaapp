@@ -13,6 +13,8 @@ node scripts/e2e/02-capture-money-health.mjs
 node scripts/e2e/03-subscriptions.mjs
 node scripts/e2e/04-weekly-review.mjs
 node scripts/e2e/05-meals-groceries.mjs
+node scripts/e2e/08-insights.mjs
+node scripts/e2e/09-planning-discovery.mjs
 ```
 
 Auth routing is a separate run because it starts the server with placeholder

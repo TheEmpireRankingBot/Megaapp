@@ -17,9 +17,14 @@ The complete context needed to build on this codebase without guessing. Written 
 | Subscriptions | ✅ merged — renewal tracking, Paid flow, Today strip |
 | Weekly review | ✅ merged & verified — PR #2 |
 | Meals & groceries | ✅ built & verified — recipes, weekly dinner plan, generated grocery list, `buy` capture |
-| Deployment | ⚠️ Vercel project exists, but local Meals/Auth/Notifications work still needs committing and pushing |
+| Deployment | ✅ Meals/Auth/Notifications pushed in `de0e303`; current Insights + planning bundle remains local |
 | Auth | ✅ optional Supabase SSR magic-link auth; zero-config local fallback retained |
 | Notifications | ✅ Web Push opt-in, due reminders, evening streak risk, weekend review, secured cron |
+| Insights | ✅ 12-week habits/mood/sleep patterns and eight-week spend trend |
+| Calendar | ✅ local events, 30-day agenda, Today integration; Google sync remains |
+| Goals | ✅ milestones linked to tasks/habits, progress, Today focus |
+| Lists & media | ✅ backlog, in-progress/finished states, ratings, `read`/`watch` capture |
+| Global search | ✅ item titles and entry notes across every module |
 | Tests | Scripted browser verification only (`scripts/e2e/`), no unit test framework |
 
 Working branch: `main` (local changes are not yet committed/pushed). Owner's locale defaults: Singapore time, SGD, metric.
@@ -52,10 +57,16 @@ src/lib/health.ts       health summary queries; WATER_GOAL_ML
 src/lib/review.ts       week math, week stats, review queries
 src/lib/meals.ts        recipes, weekly plan, active grocery list queries + types
 src/lib/notifications.ts VAPID delivery + expired endpoint cleanup
+src/lib/insights.ts      cross-module 84-day analysis + plain-language headline
+src/lib/calendar.ts      local events + one-query Today planning brief
+src/lib/goals.ts         goal progress over milestones, tasks, and habit streaks
+src/lib/lists.ts         media backlog normalization/grouping
+src/lib/search.ts        cross-module item/entry search
 src/lib/capture.ts      Quick Capture shorthand parser (pure, no IO)
 src/components/         nav, task-row, habit-row, journal-form, quick-capture,
                         quick-add-task (full form), progress-ring, sparkline
-src/app/<module>/page.tsx   today, tasks, habits, journal, money, health, review, meals
+src/app/<module>/page.tsx   today, tasks, habits, journal, money, health, review,
+                           meals, insights, calendar, goals, lists, search
 src/app/api/export/route.ts
 src/app/api/cron/notifications/route.ts
 public/sw.js             notification display/click service worker
@@ -94,6 +105,9 @@ Core rule: **start every feature on `items` (things) + `entries` (timestamped lo
 | meals | plan (items) | items | — | `{ days: Record<dayKey, { dinner?: recipeItemId }> }` | — |
 | meals | grocery (items) | items | — | `{ items: { name: string, done: boolean }[] }` | — |
 | notifications | sent (entries) | entries | — | `{ key, tag }` | — |
+| calendar | event (items) | items | — | `{ startAt, endAt?, allDay, location?, notes? }` | — |
+| goals | goal (items) | items | — | `{ horizon, targetDate?, linkedItemIds, milestones: { id, title, done }[] }` | — |
+| lists | media (items) | items | — | `{ kind, state, rating?, notes? }` | — |
 
 Semantics that matter:
 
@@ -135,6 +149,7 @@ npm run db:migrate     # against real Postgres (DATABASE_URL)
 - **Auth requires deployment configuration.** The code is complete, but protection activates only when the Supabase URL and publishable/anon key are present. Configure the Site URL, redirect allow-list, and SSR token-hash Magic Link template exactly as documented in README §Deploy. Partial configuration fails closed with an explicit server error; only omitting both variables enables local fallback.
 - **Web Push requires deployment variables.** Set both VAPID keys, `VAPID_SUBJECT`, and `CRON_SECRET`; without a complete set the Today opt-in stays hidden and the cron returns 503. The default Hobby-compatible cron runs nightly at 21:00 SG. Morning brief logic exists but needs an additional scheduler invocation on a plan that permits it.
 - **Function/database region affects responsiveness.** The dashboard query waterfalls are parallelized and common filters indexed, but Vercel Functions must still be set to the Supabase database region in Vercel Settings → Functions.
+- **Calendar is local-first v1.** Manual events and the Today agenda are complete. Google Calendar two-way sync still needs Google OAuth credentials, token storage, conflict rules, and a sync worker.
 - **Monthly recurrence** uses `setUTCMonth+1` on the noon stamp — end-of-month dates drift (Jan 31 → Mar 3). Acceptable so far; fix by clamping to month end if it bothers anyone.
 - **`formatDay`** omits the year — dates >6 months out (yearly renewals) display without year context.
 - **iOS PWA icon**: manifest icon is SVG; add PNG `apple-touch-icon` sizes for iOS.
@@ -169,15 +184,24 @@ Each spec follows the house pattern: data on the primitives, queries in `src/lib
 - The committed Hobby-compatible cron runs nightly at 21:00 SG for streak risk and weekend review. Morning brief delivery is implemented for schedulers that call the same route during 06:00–10:00 SG.
 - **Verification**: `07-notifications.mjs` covers the mobile opt-in boundary, public service worker, cron authorization, empty delivery run, and export shape. A real phone push remains the production gate after VAPID deployment.
 
-### 7.4 Insights (plan Phase 5 — data is already accumulating)
+### 7.4 Insights — shipped locally 2026-07-13
 
-- `/insights`: mood over time vs. habit adherence; spend by week; sleep vs. next-day mood; habit consistency calendar heatmap. All computable from `entries` with the existing helpers — no new tables.
-- Charts: extend the existing hand-rolled SVG components (`sparkline.tsx`) rather than adding a chart library initially.
-- **Done when**: it tells the owner one true thing they didn't know.
+- `/insights` reads one 84-day slice of `entries` plus active habits—no schema or export change. It renders a habit consistency heatmap, eight weekly spend bars, mood vs. same-day habit completion, and sleep vs. next-day mood.
+- Hand-rolled accessible SVG/CSS charts live in `insight-charts.tsx`; no chart dependency or client JavaScript was added.
+- The headline prefers sufficiently sampled positive relationships, then completed-week spend movement, then the steadiest eligible habit. It labels correlation as a pattern rather than causation and asks for more data when the sample is too small.
+- **Verified**: `08-insights.mjs` seeds each source through the UI, checks every section and coverage, and verifies the full page has no horizontal overflow at 390px.
 
-### 7.5 Tier-4 modules (small, whenever wanted)
+### 7.5 Planning + discovery bundle — shipped locally 2026-07-13
 
-Lists/media backlog, travel packing templates, people/birthdays (uses `reminders`), home maintenance (uses `reminders`), vault. Each is `items` + a page + capture support; follow the registry table in §3 and extend it.
+- Calendar v1 stores local events on `items`, renders the next 30 days, and adds today's events to the dashboard through one combined planning query.
+- Goals use milestones plus existing task/habit links. Linked tasks count when completed; linked habits count after a seven-day streak. The nearest target becomes Today&apos;s focus card.
+- Lists & Media supports book/movie/show/game backlog, in-progress and finished states, ratings, an oldest-backlog "pick next" nudge, plus `read …` and `watch …` Quick Capture.
+- Global Search queries item titles and entry notes/types and routes results back to their owning module.
+- **Verified**: `09-planning-discovery.mjs` covers all writes, Today integration, linked progress, Quick Capture, search, export, and 390px overflow checks for every new route.
+
+### 7.6 Remaining Tier-4 modules
+
+Travel packing templates, people/birthdays (uses `reminders`), home maintenance (uses `reminders`), and vault. Each is `items` + a page + capture support; follow the registry table in §3 and extend it.
 
 ## 8. Product principles to preserve (from PLAN.md, enforced in code review)
 

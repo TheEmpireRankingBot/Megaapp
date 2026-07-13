@@ -22,6 +22,8 @@ export function QuickCapture() {
         <span className="font-mono">sleep 7.5</span> ·{" "}
         <span className="font-mono">run 30min</span> ·{" "}
         <span className="font-mono">buy milk</span> ·{" "}
+        <span className="font-mono">read Dune</span> ·{" "}
+        <span className="font-mono">watch Severance</span> ·{" "}
         <span className="font-mono">todo call mum tomorrow</span>
       </p>
     </div>
