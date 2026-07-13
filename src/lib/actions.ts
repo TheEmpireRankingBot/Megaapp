@@ -5,10 +5,13 @@ import { and, eq, gte, inArray, lte } from "drizzle-orm";
 import { getDb, schema } from "@/db";
 import { getCurrentUser } from "@/lib/user";
 import {
+  addDays,
+  addMonthsClamped,
   dayEnd,
   dayKey,
   dayNoon,
   dayStart,
+  nextAnnualKey,
   nextDueKey,
   nextRenewalKey,
   todayKey,
@@ -34,6 +37,14 @@ import {
   type MediaPayload,
   type MediaState,
 } from "@/lib/lists";
+import {
+  BUILTIN_PACKING_TEMPLATES,
+  type PackingTemplatePayload,
+  type TripPayload,
+} from "@/lib/travel";
+import type { PersonPayload } from "@/lib/people";
+import type { HomeAssetPayload, MaintenancePayload } from "@/lib/home";
+import type { VaultCipherPayload } from "@/lib/vault";
 
 const MODULE_PATHS = [
   "/today",
@@ -49,6 +60,10 @@ const MODULE_PATHS = [
   "/goals",
   "/lists",
   "/search",
+  "/travel",
+  "/people",
+  "/home",
+  "/vault",
 ];
 function revalidateAll() {
   for (const p of MODULE_PATHS) revalidatePath(p);
@@ -991,6 +1006,467 @@ export async function rateMediaItem(formData: FormData) {
   revalidateAll();
 }
 
+// ---------------------------------------------------------------------------
+// Travel, people, home, and vault â€” the long-tail life-admin suite.
+// ---------------------------------------------------------------------------
+
+const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+
+export async function createPackingTemplate(formData: FormData) {
+  const title = String(formData.get("title") ?? "").trim().slice(0, 120);
+  const items = [
+    ...new Set(
+      String(formData.get("items") ?? "")
+        .split(/\r?\n/)
+        .map((item) => item.trim().slice(0, 120))
+        .filter(Boolean),
+    ),
+  ].slice(0, 60);
+  if (!title || items.length === 0) return;
+  const user = await getCurrentUser();
+  const db = await getDb();
+  await db.insert(schema.items).values({
+    userId: user.id,
+    module: "travel",
+    type: "packing_template",
+    title,
+    payload: { items } satisfies PackingTemplatePayload,
+  });
+  revalidateAll();
+}
+
+export async function createTrip(formData: FormData) {
+  const title = String(formData.get("title") ?? "").trim().slice(0, 160);
+  const destination = String(formData.get("destination") ?? "").trim().slice(0, 160);
+  const startDate = String(formData.get("startDate") ?? "");
+  const endDate = String(formData.get("endDate") ?? "");
+  const templateId = String(formData.get("templateId") ?? "builtin:weekend");
+  const notes = String(formData.get("notes") ?? "").trim().slice(0, 2_000);
+  if (
+    !title ||
+    !destination ||
+    !DATE_RE.test(startDate) ||
+    !DATE_RE.test(endDate) ||
+    endDate < startDate
+  )
+    return;
+  const user = await getCurrentUser();
+  const db = await getDb();
+  let names: string[] = [];
+  if (templateId in BUILTIN_PACKING_TEMPLATES) {
+    names = [
+      ...BUILTIN_PACKING_TEMPLATES[
+        templateId as keyof typeof BUILTIN_PACKING_TEMPLATES
+      ].items,
+    ];
+  } else if (templateId) {
+    const [template] = await db
+      .select()
+      .from(schema.items)
+      .where(
+        and(
+          eq(schema.items.id, templateId),
+          eq(schema.items.userId, user.id),
+          eq(schema.items.module, "travel"),
+          eq(schema.items.type, "packing_template"),
+        ),
+      )
+      .limit(1);
+    if (template) {
+      const payload = template.payload as PackingTemplatePayload;
+      if (Array.isArray(payload.items)) names = payload.items;
+    }
+  }
+  const payload: TripPayload = {
+    destination,
+    startDate,
+    endDate,
+    notes: notes || undefined,
+    packingItems: names.slice(0, 60).map((name) => ({
+      id: crypto.randomUUID(),
+      name,
+      done: false,
+    })),
+    itinerary: [],
+  };
+  const [item] = await db
+    .insert(schema.items)
+    .values({ userId: user.id, module: "travel", type: "trip", title, payload })
+    .returning();
+  await db.insert(schema.reminders).values({
+    userId: user.id,
+    itemId: item.id,
+    schedule: "once",
+    nextFireAt: dayStart(addDays(startDate, -1)),
+  });
+  revalidateAll();
+}
+
+export async function toggleTripPackingItem(formData: FormData) {
+  const itemId = String(formData.get("itemId") ?? "");
+  const packingId = String(formData.get("packingId") ?? "");
+  if (!itemId || !packingId) return;
+  const user = await getCurrentUser();
+  const db = await getDb();
+  const [row] = await db
+    .select()
+    .from(schema.items)
+    .where(
+      and(
+        eq(schema.items.id, itemId),
+        eq(schema.items.userId, user.id),
+        eq(schema.items.module, "travel"),
+        eq(schema.items.type, "trip"),
+      ),
+    )
+    .limit(1);
+  if (!row) return;
+  const payload = row.payload as TripPayload;
+  if (!Array.isArray(payload.packingItems)) return;
+  await db
+    .update(schema.items)
+    .set({
+      payload: {
+        ...payload,
+        packingItems: payload.packingItems.map((packing) =>
+          packing.id === packingId ? { ...packing, done: !packing.done } : packing,
+        ),
+      },
+      updatedAt: new Date(),
+    })
+    .where(eq(schema.items.id, row.id));
+  revalidateAll();
+}
+
+export async function addTripPackingItem(formData: FormData) {
+  const itemId = String(formData.get("itemId") ?? "");
+  const name = String(formData.get("name") ?? "").trim().slice(0, 120);
+  if (!itemId || !name) return;
+  const user = await getCurrentUser();
+  const db = await getDb();
+  const [row] = await db
+    .select()
+    .from(schema.items)
+    .where(
+      and(
+        eq(schema.items.id, itemId),
+        eq(schema.items.userId, user.id),
+        eq(schema.items.module, "travel"),
+        eq(schema.items.type, "trip"),
+      ),
+    )
+    .limit(1);
+  if (!row) return;
+  const payload = row.payload as TripPayload;
+  const packingItems = Array.isArray(payload.packingItems) ? payload.packingItems : [];
+  if (packingItems.length >= 100 || packingItems.some((item) => item.name.toLowerCase() === name.toLowerCase())) return;
+  await db
+    .update(schema.items)
+    .set({
+      payload: {
+        ...payload,
+        packingItems: [...packingItems, { id: crypto.randomUUID(), name, done: false }],
+      },
+      updatedAt: new Date(),
+    })
+    .where(eq(schema.items.id, row.id));
+  revalidateAll();
+}
+
+export async function addItineraryStop(formData: FormData) {
+  const itemId = String(formData.get("itemId") ?? "");
+  const day = String(formData.get("day") ?? "");
+  const time = String(formData.get("time") ?? "");
+  const title = String(formData.get("title") ?? "").trim().slice(0, 160);
+  const location = String(formData.get("location") ?? "").trim().slice(0, 160);
+  if (!itemId || !title || !DATE_RE.test(day) || (time && !/^\d{2}:\d{2}$/.test(time))) return;
+  const user = await getCurrentUser();
+  const db = await getDb();
+  const [row] = await db
+    .select()
+    .from(schema.items)
+    .where(
+      and(
+        eq(schema.items.id, itemId),
+        eq(schema.items.userId, user.id),
+        eq(schema.items.module, "travel"),
+        eq(schema.items.type, "trip"),
+      ),
+    )
+    .limit(1);
+  if (!row) return;
+  const payload = row.payload as TripPayload;
+  if (day < payload.startDate || day > payload.endDate) return;
+  const itinerary = Array.isArray(payload.itinerary) ? payload.itinerary : [];
+  if (itinerary.length >= 100) return;
+  await db
+    .update(schema.items)
+    .set({
+      payload: {
+        ...payload,
+        itinerary: [
+          ...itinerary,
+          {
+            id: crypto.randomUUID(),
+            day,
+            time: time || undefined,
+            title,
+            location: location || undefined,
+          },
+        ].sort((a, b) => `${a.day}${a.time ?? ""}`.localeCompare(`${b.day}${b.time ?? ""}`)),
+      },
+      updatedAt: new Date(),
+    })
+    .where(eq(schema.items.id, row.id));
+  revalidateAll();
+}
+
+export async function createPerson(formData: FormData) {
+  const name = String(formData.get("name") ?? "").trim().slice(0, 160);
+  const relationship = String(formData.get("relationship") ?? "").trim().slice(0, 100);
+  const birthday = String(formData.get("birthday") ?? "");
+  const contact = String(formData.get("contact") ?? "").trim().slice(0, 200);
+  const notes = String(formData.get("notes") ?? "").trim().slice(0, 2_000);
+  const checkInDays = Number(formData.get("checkInDays") ?? 30);
+  if (!name || (birthday && !DATE_RE.test(birthday)) || ![7, 14, 30, 60, 90].includes(checkInDays)) return;
+  const user = await getCurrentUser();
+  const db = await getDb();
+  const payload: PersonPayload = {
+    relationship: relationship || undefined,
+    birthday: birthday || undefined,
+    contact: contact || undefined,
+    notes: notes || undefined,
+    checkInDays,
+    giftIdeas: [],
+  };
+  const [item] = await db
+    .insert(schema.items)
+    .values({ userId: user.id, module: "people", type: "person", title: name, payload })
+    .returning();
+  if (birthday) {
+    await db.insert(schema.reminders).values({
+      userId: user.id,
+      itemId: item.id,
+      schedule: "yearly",
+      nextFireAt: dayStart(nextAnnualKey(birthday)),
+    });
+  }
+  revalidateAll();
+}
+
+export async function logPersonContact(formData: FormData) {
+  const itemId = String(formData.get("itemId") ?? "");
+  const note = String(formData.get("note") ?? "").trim().slice(0, 1_000);
+  if (!itemId) return;
+  const user = await getCurrentUser();
+  const db = await getDb();
+  const [row] = await db
+    .select()
+    .from(schema.items)
+    .where(
+      and(
+        eq(schema.items.id, itemId),
+        eq(schema.items.userId, user.id),
+        eq(schema.items.module, "people"),
+        eq(schema.items.type, "person"),
+      ),
+    )
+    .limit(1);
+  if (!row) return;
+  await db
+    .update(schema.items)
+    .set({
+      payload: { ...(row.payload as PersonPayload), lastContactKey: todayKey() },
+      updatedAt: new Date(),
+    })
+    .where(eq(schema.items.id, row.id));
+  await db.insert(schema.entries).values({
+    userId: user.id,
+    module: "people",
+    type: "contact",
+    occurredAt: new Date(),
+    note: note || `Caught up with ${row.title}`,
+    itemId: row.id,
+  });
+  revalidateAll();
+}
+
+export async function addGiftIdea(formData: FormData) {
+  const itemId = String(formData.get("itemId") ?? "");
+  const idea = String(formData.get("idea") ?? "").trim().slice(0, 200);
+  if (!itemId || !idea) return;
+  const user = await getCurrentUser();
+  const db = await getDb();
+  const [row] = await db
+    .select()
+    .from(schema.items)
+    .where(and(eq(schema.items.id, itemId), eq(schema.items.userId, user.id), eq(schema.items.module, "people")))
+    .limit(1);
+  if (!row) return;
+  const payload = row.payload as PersonPayload;
+  const ideas = Array.isArray(payload.giftIdeas) ? payload.giftIdeas : [];
+  if (ideas.length >= 30 || ideas.some((value) => value.toLowerCase() === idea.toLowerCase())) return;
+  await db
+    .update(schema.items)
+    .set({ payload: { ...payload, giftIdeas: [...ideas, idea] }, updatedAt: new Date() })
+    .where(eq(schema.items.id, row.id));
+  revalidateAll();
+}
+
+export async function createHomeAsset(formData: FormData) {
+  const title = String(formData.get("title") ?? "").trim().slice(0, 160);
+  const category = String(formData.get("category") ?? "other").trim().slice(0, 80);
+  const serial = String(formData.get("serial") ?? "").trim().slice(0, 200);
+  const purchaseDate = String(formData.get("purchaseDate") ?? "");
+  const warrantyEnd = String(formData.get("warrantyEnd") ?? "");
+  const notes = String(formData.get("notes") ?? "").trim().slice(0, 2_000);
+  if (!title || (purchaseDate && !DATE_RE.test(purchaseDate)) || (warrantyEnd && !DATE_RE.test(warrantyEnd))) return;
+  const user = await getCurrentUser();
+  const db = await getDb();
+  const payload: HomeAssetPayload = {
+    category: category || "other",
+    serial: serial || undefined,
+    purchaseDate: purchaseDate || undefined,
+    warrantyEnd: warrantyEnd || undefined,
+    notes: notes || undefined,
+  };
+  await db.insert(schema.items).values({ userId: user.id, module: "home", type: "asset", title, payload });
+  revalidateAll();
+}
+
+export async function createMaintenanceItem(formData: FormData) {
+  const title = String(formData.get("title") ?? "").trim().slice(0, 160);
+  const assetItemId = String(formData.get("assetItemId") ?? "");
+  const dueDate = String(formData.get("dueDate") ?? "");
+  const cadenceMonths = Number(formData.get("cadenceMonths") ?? 0);
+  const notes = String(formData.get("notes") ?? "").trim().slice(0, 2_000);
+  if (!title || !DATE_RE.test(dueDate) || ![0, 1, 3, 6, 12].includes(cadenceMonths)) return;
+  const user = await getCurrentUser();
+  const db = await getDb();
+  let ownedAssetId: string | undefined;
+  if (assetItemId) {
+    const [asset] = await db
+      .select({ id: schema.items.id })
+      .from(schema.items)
+      .where(
+        and(
+          eq(schema.items.id, assetItemId),
+          eq(schema.items.userId, user.id),
+          eq(schema.items.module, "home"),
+          eq(schema.items.type, "asset"),
+        ),
+      )
+      .limit(1);
+    ownedAssetId = asset?.id;
+  }
+  const payload: MaintenancePayload = {
+    assetItemId: ownedAssetId,
+    dueDate,
+    cadenceMonths: cadenceMonths || undefined,
+    notes: notes || undefined,
+    completedCount: 0,
+  };
+  const [item] = await db
+    .insert(schema.items)
+    .values({ userId: user.id, module: "home", type: "maintenance", title, payload })
+    .returning();
+  await db.insert(schema.reminders).values({
+    userId: user.id,
+    itemId: item.id,
+    schedule: cadenceMonths ? `months:${cadenceMonths}` : "once",
+    nextFireAt: dayStart(dueDate),
+  });
+  revalidateAll();
+}
+
+export async function completeMaintenance(formData: FormData) {
+  const itemId = String(formData.get("itemId") ?? "");
+  if (!itemId) return;
+  const user = await getCurrentUser();
+  const db = await getDb();
+  const [row] = await db
+    .select()
+    .from(schema.items)
+    .where(
+      and(
+        eq(schema.items.id, itemId),
+        eq(schema.items.userId, user.id),
+        eq(schema.items.module, "home"),
+        eq(schema.items.type, "maintenance"),
+        eq(schema.items.status, "active"),
+      ),
+    )
+    .limit(1);
+  if (!row) return;
+  const payload = row.payload as MaintenancePayload;
+  await db.insert(schema.entries).values({
+    userId: user.id,
+    module: "home",
+    type: "maintenance_completed",
+    occurredAt: new Date(),
+    note: row.title,
+    itemId: row.id,
+    payload: { dueDate: payload.dueDate },
+  });
+  if (payload.cadenceMonths) {
+    let next = payload.dueDate;
+    while (next <= todayKey()) next = addMonthsClamped(next, payload.cadenceMonths);
+    await db
+      .update(schema.items)
+      .set({
+        payload: { ...payload, dueDate: next, completedCount: (payload.completedCount || 0) + 1 },
+        updatedAt: new Date(),
+      })
+      .where(eq(schema.items.id, row.id));
+    await db
+      .update(schema.reminders)
+      .set({ nextFireAt: dayStart(next) })
+      .where(and(eq(schema.reminders.userId, user.id), eq(schema.reminders.itemId, row.id)));
+  } else {
+    await db.update(schema.items).set({ status: "archived", updatedAt: new Date() }).where(eq(schema.items.id, row.id));
+    await db
+      .update(schema.reminders)
+      .set({ nextFireAt: null })
+      .where(and(eq(schema.reminders.userId, user.id), eq(schema.reminders.itemId, row.id)));
+  }
+  revalidateAll();
+}
+
+export async function createVaultItem(formData: FormData) {
+  const salt = String(formData.get("salt") ?? "");
+  const iv = String(formData.get("iv") ?? "");
+  const ciphertext = String(formData.get("ciphertext") ?? "");
+  const base64 = /^[A-Za-z0-9+/]+={0,2}$/;
+  if (
+    !base64.test(salt) ||
+    !base64.test(iv) ||
+    !base64.test(ciphertext) ||
+    salt.length > 100 ||
+    iv.length > 100 ||
+    ciphertext.length > 250_000
+  )
+    return;
+  const user = await getCurrentUser();
+  const db = await getDb();
+  const payload: VaultCipherPayload = {
+    version: 1,
+    algorithm: "AES-GCM",
+    kdf: "PBKDF2-SHA256",
+    iterations: 250_000,
+    salt,
+    iv,
+    ciphertext,
+  };
+  await db.insert(schema.items).values({
+    userId: user.id,
+    module: "vault",
+    type: "secret",
+    title: "Encrypted item",
+    payload,
+  });
+  revalidateAll();
+}
+
 // Quick Capture v2: one input, many destinations (src/lib/capture.ts).
 export async function quickCapture(formData: FormData) {
   const parsed = parseCapture(String(formData.get("text") ?? ""));
@@ -1026,6 +1502,70 @@ export async function quickCapture(formData: FormData) {
         payload: { kind: parsed.mediaKind, state: "backlog" },
       });
       break;
+    case "person": {
+      const matches = await db
+        .select()
+        .from(schema.items)
+        .where(
+          and(
+            eq(schema.items.userId, user.id),
+            eq(schema.items.module, "people"),
+            eq(schema.items.type, "person"),
+            eq(schema.items.title, parsed.name),
+          ),
+        )
+        .limit(1);
+      const person = matches[0];
+      if (person && parsed.contacted) {
+        await db
+          .update(schema.items)
+          .set({
+            payload: { ...(person.payload as PersonPayload), lastContactKey: todayKey() },
+            updatedAt: new Date(),
+          })
+          .where(eq(schema.items.id, person.id));
+        await db.insert(schema.entries).values({
+          userId: user.id,
+          module: "people",
+          type: "contact",
+          occurredAt: new Date(),
+          note: `Caught up with ${person.title}`,
+          itemId: person.id,
+        });
+      } else if (!person) {
+        await db.insert(schema.items).values({
+          userId: user.id,
+          module: "people",
+          type: "person",
+          title: parsed.name,
+          payload: {
+            checkInDays: 30,
+            giftIdeas: [],
+            lastContactKey: parsed.contacted ? todayKey() : undefined,
+          } satisfies PersonPayload,
+        });
+      }
+      break;
+    }
+    case "maintenance": {
+      const [item] = await db
+        .insert(schema.items)
+        .values({
+          userId: user.id,
+          module: "home",
+          type: "maintenance",
+          title: parsed.title,
+          payload: { dueDate: todayKey(), completedCount: 0 } satisfies MaintenancePayload,
+        })
+        .returning();
+      await db.insert(schema.reminders).values({
+        userId: user.id,
+        itemId: item.id,
+        schedule: "once",
+        nextFireAt: dayStart(todayKey()),
+      });
+      break;
+    }
     case "task": {
       const dueKey =
         parsed.due === "today"

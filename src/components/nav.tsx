@@ -16,6 +16,10 @@ import {
   Target,
   LibraryBig,
   Search,
+  Plane,
+  UsersRound,
+  House,
+  ShieldCheck,
   type LucideIcon,
 } from "lucide-react";
 
@@ -40,6 +44,10 @@ const links: {
   { href: "/goals", label: "Goals", icon: Target, desktopOnly: true },
   { href: "/lists", label: "Lists", icon: LibraryBig, desktopOnly: true },
   { href: "/search", label: "Search", icon: Search, desktopOnly: true },
+  { href: "/travel", label: "Travel", icon: Plane, desktopOnly: true },
+  { href: "/people", label: "People", icon: UsersRound, desktopOnly: true },
+  { href: "/home", label: "Home", icon: House, desktopOnly: true },
+  { href: "/vault", label: "Vault", icon: ShieldCheck, desktopOnly: true },
 ];
 
 export function Sidebar() {

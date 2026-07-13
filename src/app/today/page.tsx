@@ -3,7 +3,7 @@ import { getCurrentUser } from "@/lib/user";
 import { getTodayData, MOODS } from "@/lib/data";
 import { formatSGD, getSubscriptions } from "@/lib/money";
 import { getReviewForWeek, reviewDue, weekStartKey } from "@/lib/review";
-import { formatTime, isSunday, TIMEZONE, todayKey } from "@/lib/dates";
+import { formatDay, formatTime, isSunday, TIMEZONE, todayKey } from "@/lib/dates";
 import { ProgressRing } from "@/components/progress-ring";
 import { TaskRow } from "@/components/task-row";
 import { HabitRow } from "@/components/habit-row";
@@ -13,6 +13,7 @@ import { isSupabaseConfigured } from "@/lib/supabase/config";
 import { NotificationControl } from "@/components/notification-control";
 import { getPlanningBrief } from "@/lib/calendar";
 import { Search as SearchIcon } from "lucide-react";
+import { getLifeAdminBrief } from "@/lib/life-admin";
 
 export const metadata = { title: "Today" };
 export const dynamic = "force-dynamic";
@@ -35,11 +36,12 @@ function nudge(done: number, total: number) {
 
 export default async function TodayPage() {
   const user = await getCurrentUser();
-  const [data, subs, weekReview, planning] = await Promise.all([
+  const [data, subs, weekReview, planning, lifeAdmin] = await Promise.all([
     getTodayData(user.id),
     getSubscriptions(user.id),
     getReviewForWeek(user.id, weekStartKey(todayKey())),
     getPlanningBrief(user.id),
+    getLifeAdminBrief(user.id),
   ]);
   const { taskGroups, habits, journal, score } = data;
   const renewingSoon = subs.list.filter((s) => s.daysUntil <= 7);
@@ -152,6 +154,18 @@ export default async function TodayPage() {
             />
           </div>
         </Link>
+      )}
+
+      {(lifeAdmin.nextTrip || lifeAdmin.nextBirthday || lifeAdmin.dueMaintenance || lifeAdmin.staleContact) && (
+        <section className="space-y-2">
+          <h2 className="text-sm font-semibold uppercase tracking-wide text-black/50 dark:text-white/50">Life admin</h2>
+          <div className="grid gap-2 sm:grid-cols-2">
+            {lifeAdmin.nextTrip && <Link href="/travel" className="rounded-xl border border-black/10 p-3 text-sm hover:bg-black/[.02] dark:border-white/10 dark:hover:bg-white/[.03]"><p className="text-xs font-semibold uppercase tracking-wide text-black/40 dark:text-white/40">Next trip</p><p className="mt-1 font-medium">{lifeAdmin.nextTrip.title}</p><p className="text-xs text-black/50 dark:text-white/50">{formatDay(lifeAdmin.nextTrip.startDate)} · {lifeAdmin.nextTrip.packed}/{lifeAdmin.nextTrip.total} packed</p></Link>}
+            {lifeAdmin.nextBirthday && <Link href="/people" className="rounded-xl border border-black/10 p-3 text-sm hover:bg-black/[.02] dark:border-white/10 dark:hover:bg-white/[.03]"><p className="text-xs font-semibold uppercase tracking-wide text-black/40 dark:text-white/40">Birthday</p><p className="mt-1 font-medium">{lifeAdmin.nextBirthday.name}</p><p className="text-xs text-black/50 dark:text-white/50">{formatDay(lifeAdmin.nextBirthday.key)} · {lifeAdmin.nextBirthday.daysUntil === 0 ? "today" : `${lifeAdmin.nextBirthday.daysUntil}d`}</p></Link>}
+            {lifeAdmin.dueMaintenance && <Link href="/home" className="rounded-xl border border-amber-500/25 bg-amber-500/[.04] p-3 text-sm"><p className="text-xs font-semibold uppercase tracking-wide text-amber-700 dark:text-amber-400">Maintenance</p><p className="mt-1 font-medium">{lifeAdmin.dueMaintenance.title}</p><p className="text-xs text-black/50 dark:text-white/50">{lifeAdmin.dueMaintenance.daysUntil < 0 ? `${-lifeAdmin.dueMaintenance.daysUntil}d overdue` : formatDay(lifeAdmin.dueMaintenance.dueDate)}</p></Link>}
+            {lifeAdmin.staleContact && <Link href="/people" className="rounded-xl border border-black/10 p-3 text-sm hover:bg-black/[.02] dark:border-white/10 dark:hover:bg-white/[.03]"><p className="text-xs font-semibold uppercase tracking-wide text-black/40 dark:text-white/40">Reconnect</p><p className="mt-1 font-medium">Message {lifeAdmin.staleContact.name}</p><p className="text-xs text-black/50 dark:text-white/50">{lifeAdmin.staleContact.days} days since last contact</p></Link>}
+          </div>
+        </section>
       )}
 
       {vapidPublicKey && (

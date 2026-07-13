@@ -17,7 +17,7 @@ The complete context needed to build on this codebase without guessing. Written 
 | Subscriptions | ✅ merged — renewal tracking, Paid flow, Today strip |
 | Weekly review | ✅ merged & verified — PR #2 |
 | Meals & groceries | ✅ built & verified — recipes, weekly dinner plan, generated grocery list, `buy` capture |
-| Deployment | ✅ Meals/Auth/Notifications pushed in `de0e303`; current Insights + planning bundle remains local |
+| Deployment | ✅ Through Insights/planning pushed in `2a17320`; current Tier-4 bundle remains local |
 | Auth | ✅ optional Supabase SSR magic-link auth; zero-config local fallback retained |
 | Notifications | ✅ Web Push opt-in, due reminders, evening streak risk, weekend review, secured cron |
 | Insights | ✅ 12-week habits/mood/sleep patterns and eight-week spend trend |
@@ -25,13 +25,17 @@ The complete context needed to build on this codebase without guessing. Written 
 | Goals | ✅ milestones linked to tasks/habits, progress, Today focus |
 | Lists & media | ✅ backlog, in-progress/finished states, ratings, `read`/`watch` capture |
 | Global search | ✅ item titles and entry notes across every module |
+| Travel | ✅ trips, itinerary, reusable packing templates, progress, reminders |
+| People | ✅ birthdays, reconnect cadence, contact logs, gift ideas, reminders |
+| Home | ✅ possessions, warranties, recurring maintenance, reminders |
+| Vault | ✅ browser-side AES-GCM encryption; plaintext and passphrase never stored |
 | Tests | Scripted browser verification only (`scripts/e2e/`), no unit test framework |
 
 Working branch: `main` (local changes are not yet committed/pushed). Owner's locale defaults: Singapore time, SGD, metric.
 
 ## 2. Stack & architecture
 
-- **Next.js 16 (App Router, RSC) + TypeScript strict + Tailwind 4** — pages are async server components; **all mutations are server actions invoked from plain `<form action={...}>`** (zero client JS for mutations). The only client components are `src/components/nav.tsx` (needs `usePathname`). Keep it that way unless interactivity genuinely requires a client component.
+- **Next.js 16 (App Router, RSC) + TypeScript strict + Tailwind 4** — pages are async server components; **all mutations land in server actions**. Plain `<form action={...}>` is the default. Client components are limited to navigation, notification opt-in, and Vault encryption; Vault is the deliberate exception because plaintext must be encrypted before its server action receives anything.
 - **Drizzle ORM, Postgres dialect** (`src/db/schema.ts`). Two drivers behind one `getDb()` (`src/db/index.ts`):
   - `DATABASE_URL` unset → embedded **PGlite** persisted to `.pglite/`, **auto-migrates** on first connection. Delete `.pglite/` to reset dev data.
   - `DATABASE_URL` set → **postgres-js** (Supabase or any Postgres); apply migrations with `npm run db:migrate`.
@@ -62,6 +66,11 @@ src/lib/calendar.ts      local events + one-query Today planning brief
 src/lib/goals.ts         goal progress over milestones, tasks, and habit streaks
 src/lib/lists.ts         media backlog normalization/grouping
 src/lib/search.ts        cross-module item/entry search
+src/lib/travel.ts        trips, packing templates, itinerary read model
+src/lib/people.ts        birthdays and reconnect read model
+src/lib/home.ts          possession and maintenance read model
+src/lib/vault.ts         ciphertext-only Vault read model
+src/lib/life-admin.ts    one-query Today brief for travel/people/home
 src/lib/capture.ts      Quick Capture shorthand parser (pure, no IO)
 src/components/         nav, task-row, habit-row, journal-form, quick-capture,
                         quick-add-task (full form), progress-ring, sparkline
@@ -108,6 +117,14 @@ Core rule: **start every feature on `items` (things) + `entries` (timestamped lo
 | calendar | event (items) | items | — | `{ startAt, endAt?, allDay, location?, notes? }` | — |
 | goals | goal (items) | items | — | `{ horizon, targetDate?, linkedItemIds, milestones: { id, title, done }[] }` | — |
 | lists | media (items) | items | — | `{ kind, state, rating?, notes? }` | — |
+| travel | trip (items) | items (+reminders) | — | `{ destination, startDate, endDate, notes?, packingItems[], itinerary[] }` | — |
+| travel | packing_template (items) | items | — | `{ items: string[] }` | — |
+| people | person (items) | items (+reminders) | — | `{ relationship?, birthday?, contact?, notes?, lastContactKey?, checkInDays, giftIdeas[] }` | — |
+| people | contact (entries) | entries | — | `{}` | → person item |
+| home | asset (items) | items | — | `{ category, serial?, purchaseDate?, warrantyEnd?, notes? }` | — |
+| home | maintenance (items) | items (+reminders) | — | `{ assetItemId?, dueDate, cadenceMonths?, notes?, completedCount }` | — |
+| home | maintenance_completed (entries) | entries | — | `{ dueDate }` | → maintenance item |
+| vault | secret (items) | items | — | `{ version, algorithm, kdf, iterations, salt, iv, ciphertext }` | — |
 
 Semantics that matter:
 
@@ -150,7 +167,7 @@ npm run db:migrate     # against real Postgres (DATABASE_URL)
 - **Web Push requires deployment variables.** Set both VAPID keys, `VAPID_SUBJECT`, and `CRON_SECRET`; without a complete set the Today opt-in stays hidden and the cron returns 503. The default Hobby-compatible cron runs nightly at 21:00 SG. Morning brief logic exists but needs an additional scheduler invocation on a plan that permits it.
 - **Function/database region affects responsiveness.** The dashboard query waterfalls are parallelized and common filters indexed, but Vercel Functions must still be set to the Supabase database region in Vercel Settings → Functions.
 - **Calendar is local-first v1.** Manual events and the Today agenda are complete. Google Calendar two-way sync still needs Google OAuth credentials, token storage, conflict rules, and a sync worker.
-- **Monthly recurrence** uses `setUTCMonth+1` on the noon stamp — end-of-month dates drift (Jan 31 → Mar 3). Acceptable so far; fix by clamping to month end if it bothers anyone.
+- **Vault passphrases are unrecoverable.** Every item is independently salted and encrypted with AES-GCM after PBKDF2-SHA256 (250,000 iterations) in the browser. Titles are inside the ciphertext; the database sees only `Encrypted item`. The current unlock flow assumes one passphrase across all items.
 - **`formatDay`** omits the year — dates >6 months out (yearly renewals) display without year context.
 - **iOS PWA icon**: manifest icon is SVG; add PNG `apple-touch-icon` sizes for iOS.
 - **Import doesn't exist** — export is one-way JSON. CSV importers are planned per module (plan §3).
@@ -199,9 +216,17 @@ Each spec follows the house pattern: data on the primitives, queries in `src/lib
 - Global Search queries item titles and entry notes/types and routes results back to their owning module.
 - **Verified**: `09-planning-discovery.mjs` covers all writes, Today integration, linked progress, Quick Capture, search, export, and 390px overflow checks for every new route.
 
-### 7.6 Remaining Tier-4 modules
+### 7.6 Life-admin + encrypted Vault bundle — shipped locally 2026-07-13
 
-Travel packing templates, people/birthdays (uses `reminders`), home maintenance (uses `reminders`), and vault. Each is `items` + a page + capture support; follow the registry table in §3 and extend it.
+- Travel has trip dates, itinerary stops, built-in and reusable packing templates, packing progress, a day-before reminder, and a Today trip card.
+- People has birthdays, yearly reminders, reconnect cadence, contact history entries, gift ideas, `person …` / `met …` capture, and Today birthday/reconnect cards.
+- Home has possession serials and warranties, linked one-time or recurring maintenance, completion history, due reminders, `service …` capture, and Today overdue work.
+- Vault encrypts title, type, and content in the browser with AES-GCM + PBKDF2 before the ciphertext-only server action runs. Search deliberately excludes Vault; JSON export contains encrypted payloads only.
+- **Verified**: `10-life-admin-vault.mjs` exercises all writes, recurring maintenance, reminders, Today/Search/export, proves Vault plaintext is absent at rest, decrypts it on-device, and checks every route at 390px.
+
+### 7.7 Recommended next release
+
+Phase 5 Assistant: safe read-only tools over the existing modules, explicit confirmation for writes, and weekly-review drafting. It needs an LLM provider key and a strict tool/audit boundary. Google Calendar sync remains a separate integration project because it needs Google OAuth credentials and conflict handling.
 
 ## 8. Product principles to preserve (from PLAN.md, enforced in code review)
 

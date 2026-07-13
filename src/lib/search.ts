@@ -1,4 +1,4 @@
-import { and, desc, eq, ilike, or } from "drizzle-orm";
+import { and, desc, eq, ilike, ne, or } from "drizzle-orm";
 import { getDb, schema } from "@/db";
 import { dayKey } from "@/lib/dates";
 
@@ -13,6 +13,9 @@ const MODULE_HREF: Record<string, string> = {
   calendar: "/calendar",
   goals: "/goals",
   lists: "/lists",
+  travel: "/travel",
+  people: "/people",
+  home: "/home",
 };
 
 export type SearchResult = {
@@ -37,6 +40,7 @@ export async function searchAll(userId: string, rawQuery: string): Promise<Searc
         and(
           eq(schema.items.userId, userId),
           eq(schema.items.status, "active"),
+          ne(schema.items.module, "vault"),
           ilike(schema.items.title, pattern),
         ),
       )

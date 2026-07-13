@@ -37,6 +37,18 @@ export function addDays(key: string, n: number): string {
   return dayKey(d);
 }
 
+/** Add calendar months while keeping end-of-month dates in the target month. */
+export function addMonthsClamped(key: string, months: number): string {
+  const [year, month, day] = key.split("-").map(Number);
+  const target = new Date(Date.UTC(year, month - 1 + months, 1));
+  const targetYear = target.getUTCFullYear();
+  const targetMonth = target.getUTCMonth() + 1;
+  const maxDay = new Date(Date.UTC(targetYear, targetMonth, 0)).getUTCDate();
+  return `${targetYear.toString().padStart(4, "0")}-${targetMonth
+    .toString()
+    .padStart(2, "0")}-${Math.min(day, maxDay).toString().padStart(2, "0")}`;
+}
+
 /** Next due day for a recurring task, anchored to the previous due day. */
 export function nextDueKey(
   fromKey: string,
@@ -44,9 +56,7 @@ export function nextDueKey(
 ): string {
   if (recurrence === "daily") return addDays(fromKey, 1);
   if (recurrence === "weekly") return addDays(fromKey, 7);
-  const d = dayNoon(fromKey);
-  d.setUTCMonth(d.getUTCMonth() + 1);
-  return dayKey(d);
+  return addMonthsClamped(fromKey, 1);
 }
 
 /** Signed whole days from a to b (positive = b is later). */
@@ -83,6 +93,21 @@ export function formatDay(key: string): string {
 export function lastNDays(n: number): string[] {
   const today = todayKey();
   return Array.from({ length: n }, (_, i) => addDays(today, i - (n - 1)));
+}
+
+/** Next occurrence of a month/day (birthdays, anniversaries), including today. */
+export function nextAnnualKey(sourceKey: string, fromKey: string = todayKey()): string {
+  const [, sourceMonth, sourceDay] = sourceKey.split("-").map(Number);
+  const [fromYear] = fromKey.split("-").map(Number);
+  if (!sourceMonth || !sourceDay || !fromYear) return fromKey;
+  const occurrence = (year: number) => {
+    const maxDay = new Date(Date.UTC(year, sourceMonth, 0)).getUTCDate();
+    return `${year.toString().padStart(4, "0")}-${sourceMonth
+      .toString()
+      .padStart(2, "0")}-${Math.min(sourceDay, maxDay).toString().padStart(2, "0")}`;
+  };
+  const thisYear = occurrence(fromYear);
+  return thisYear >= fromKey ? thisYear : occurrence(fromYear + 1);
 }
 
 /** Compact date label for charts, e.g. "13 Jul". */

@@ -4,7 +4,7 @@ A personal **Life OS** — one app for everything: tasks, habits, health, money,
 
 ## Status
 
-🏗️ **Building — daily loop, money, health, meals, reviews, Auth, and Web Push are shipped. Insights, Calendar, Goals, Lists & Media, and global Search are built locally.** The master plan (vision, module catalog, roadmap) lives in [`docs/PLAN.md`](docs/PLAN.md). The engineering handover — architecture, exact data shapes, conventions, verification workflow, and build-ready specs for what's next — lives in [`docs/HANDOVER.md`](docs/HANDOVER.md); agents should also read [`AGENTS.md`](AGENTS.md).
+🏗️ **Building — Phases 0–3 plus Auth, Web Push, Insights, Lists & Media, and Search are shipped. Travel, People, Home, and the browser-encrypted Vault are built locally.** The master plan (vision, module catalog, roadmap) lives in [`docs/PLAN.md`](docs/PLAN.md). The engineering handover — architecture, exact data shapes, conventions, verification workflow, and build-ready specs for what's next — lives in [`docs/HANDOVER.md`](docs/HANDOVER.md); agents should also read [`AGENTS.md`](AGENTS.md).
 
 ## Development
 

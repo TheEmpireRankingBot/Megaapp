@@ -8,6 +8,8 @@
 //   water 500 / water 2l   → water log (ml)
 //   run 5km 30min / gym    → workout log
 //   buy milk               → active grocery list
+//   met Alex / person Alex → contact log / person
+//   service aircon         → home maintenance due today
 //   todo call mum tomorrow → task with due date
 //   anything else          → task due today
 
@@ -19,6 +21,8 @@ export type Captured =
   | { kind: "workout"; note: string; minutes: number | null }
   | { kind: "grocery"; name: string }
   | { kind: "media"; title: string; mediaKind: "book" | "movie" }
+  | { kind: "person"; name: string; contacted: boolean }
+  | { kind: "maintenance"; title: string }
   | { kind: "task"; title: string; due: "today" | "tomorrow" | null; priority: number };
 
 const WORKOUT_WORDS = /^(gym|run|running|walk|swim|yoga|lift|workout|cycle|hike)\b/i;
@@ -91,6 +95,21 @@ export function parseCapture(raw: string): Captured | null {
   const watch = text.match(/^watch\s+(.+)$/i);
   if (watch?.[1].trim()) {
     return { kind: "media", title: watch[1].trim(), mediaKind: "movie" };
+  }
+
+  const contacted = text.match(/^met\s+(.+)$/i);
+  if (contacted?.[1].trim()) {
+    return { kind: "person", name: contacted[1].trim(), contacted: true };
+  }
+
+  const person = text.match(/^person\s+(.+)$/i);
+  if (person?.[1].trim()) {
+    return { kind: "person", name: person[1].trim(), contacted: false };
+  }
+
+  const maintenance = text.match(/^(?:service|maintain|fix)\s+(.+)$/i);
+  if (maintenance?.[1].trim()) {
+    return { kind: "maintenance", title: maintenance[1].trim() };
   }
 
   let title = text.replace(/^todo\s+/i, "");

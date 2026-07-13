@@ -72,14 +72,30 @@ async function deliverDueReminders(
     const subscriptions = subscriptionsByUser.get(reminder.userId) ?? [];
     if (subscriptions.length === 0) continue;
     const details = item?.payload as Partial<SubscriptionPayload> | undefined;
-    const body =
-      typeof details?.amount === "number"
-        ? `${formatSGD(details.amount)} is due. Open Money when you’ve paid it.`
-        : "A saved reminder is due. Open Megaapp to check it.";
+    let title = item ? `${item.title} reminder` : "Megaapp reminder";
+    let body = "A saved reminder is due. Open Megaapp to check it.";
+    let url = "/today";
+    if (item?.module === "money" && typeof details?.amount === "number") {
+      title = `${item.title} renews today`;
+      body = `${formatSGD(details.amount)} is due. Open Money when you’ve paid it.`;
+      url = "/money";
+    } else if (item?.module === "people") {
+      title = `${item.title}'s birthday`;
+      body = "A small message today will mean a lot.";
+      url = "/people";
+    } else if (item?.module === "home") {
+      title = `Maintenance due: ${item.title}`;
+      body = "Do it now, or reschedule it before it becomes a repair.";
+      url = "/home";
+    } else if (item?.module === "travel") {
+      title = `${item.title} starts tomorrow`;
+      body = "One last packing check before you go.";
+      url = "/travel";
+    }
     const count = await sendPushToSubscriptions(reminder.userId, subscriptions, {
-      title: item ? `${item.title} renews today` : "Megaapp reminder",
+      title,
       body,
-      url: item?.module === "money" ? "/money" : "/today",
+      url,
       tag: `reminder-${reminder.id}`,
     });
     if (count === 0) continue;
