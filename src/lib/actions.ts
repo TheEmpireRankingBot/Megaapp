@@ -45,6 +45,16 @@ import {
 import type { PersonPayload } from "@/lib/people";
 import type { HomeAssetPayload, MaintenancePayload } from "@/lib/home";
 import type { VaultCipherPayload } from "@/lib/vault";
+import {
+  answerWithAssistant,
+  getAssistantSnapshot,
+  type AssistantReply,
+} from "@/lib/assistant";
+import {
+  assistantActionAuditNote,
+  parseAssistantActionProposal,
+  validateAssistantActionProposal,
+} from "@/lib/assistant-actions";
 
 const MODULE_PATHS = [
   "/today",
@@ -64,6 +74,7 @@ const MODULE_PATHS = [
   "/people",
   "/home",
   "/vault",
+  "/assistant",
 ];
 function revalidateAll() {
   for (const p of MODULE_PATHS) revalidatePath(p);
@@ -324,6 +335,7 @@ async function insertExpense(
     amount: String(amount),
     category: category ?? "other",
   });
+  return entry;
 }
 
 export async function logExpense(formData: FormData) {
@@ -1465,6 +1477,135 @@ export async function createVaultItem(formData: FormData) {
     payload,
   });
   revalidateAll();
+}
+
+// ---------------------------------------------------------------------------
+// Assistant — proposals stay read-only until a separate explicit confirmation.
+// Questions and replies are never persisted locally.
+// ---------------------------------------------------------------------------
+
+export async function askAssistant(formData: FormData): Promise<AssistantReply> {
+  const question = String(formData.get("question") ?? "").trim().slice(0, 800);
+  if (!question) {
+    return {
+      answer: "Ask about today’s focus, spending, health, or your weekly review.",
+      mode: "local",
+      sources: ["Your compact Megaapp summary"],
+    };
+  }
+
+  // Recognized commands are handled before the heavier dashboard snapshot and
+  // never reach an external provider. They still cannot write without confirm.
+  const proposal = parseAssistantActionProposal(question);
+  if (proposal) {
+    return {
+      answer: "I prepared a draft from your command. Review it below; nothing changes until you confirm.",
+      mode: "local",
+      sources: ["Your requested action details"],
+      proposal,
+    };
+  }
+
+  const user = await getCurrentUser();
+  const snapshot = await getAssistantSnapshot(user.id, user.settings);
+  return answerWithAssistant(question, snapshot);
+}
+
+export async function confirmAssistantAction(
+  formData: FormData,
+): Promise<{ id: string; summary: string; day: string; action: "task" | "expense" | "calendar" | "habit" } | null> {
+  const raw = String(formData.get("proposal") ?? "");
+  let value: unknown;
+  try {
+    value = JSON.parse(raw);
+  } catch {
+    return null;
+  }
+  const proposal = validateAssistantActionProposal(value);
+  if (!proposal) return null;
+
+  const user = await getCurrentUser();
+  const db = await getDb();
+  let itemId: string | undefined;
+  let targetEntryId: string | undefined;
+
+  switch (proposal.kind) {
+    case "task": {
+      const [item] = await db
+        .insert(schema.items)
+        .values({ userId: user.id, module: "tasks", type: "task", title: proposal.title })
+        .returning();
+      await db.insert(schema.tasks).values({
+        itemId: item.id,
+        dueAt: proposal.dueKey ? dayNoon(proposal.dueKey) : null,
+        recurrence: null,
+        priority: 0,
+      });
+      itemId = item.id;
+      break;
+    }
+    case "expense": {
+      const entry = await insertExpense(
+        user.id,
+        proposal.amount,
+        proposal.note,
+        proposal.category,
+        proposal.day,
+      );
+      targetEntryId = entry.id;
+      break;
+    }
+    case "calendar": {
+      const start = proposal.startTime
+        ? zonedDateTime(proposal.date, proposal.startTime)
+        : dayStart(proposal.date);
+      if (Number.isNaN(start.getTime())) return null;
+      const payload: CalendarEventPayload = {
+        startAt: start.toISOString(),
+        allDay: proposal.startTime === null,
+      };
+      const [item] = await db
+        .insert(schema.items)
+        .values({
+          userId: user.id,
+          module: "calendar",
+          type: "event",
+          title: proposal.title,
+          payload,
+        })
+        .returning();
+      itemId = item.id;
+      break;
+    }
+    case "habit": {
+      const [item] = await db
+        .insert(schema.items)
+        .values({ userId: user.id, module: "habits", type: "habit", title: proposal.title })
+        .returning();
+      await db.insert(schema.habits).values({ itemId: item.id });
+      itemId = item.id;
+      break;
+    }
+  }
+
+  const summary = assistantActionAuditNote(proposal);
+  const [audit] = await db
+    .insert(schema.entries)
+    .values({
+      userId: user.id,
+      module: "assistant",
+      type: "action_applied",
+      occurredAt: new Date(),
+      note: summary,
+      itemId,
+      payload: {
+        action: proposal.kind,
+        targetEntryId,
+      },
+    })
+    .returning();
+  revalidateAll();
+  return { id: audit.id, summary, day: dayKey(audit.occurredAt), action: proposal.kind };
 }
 
 // Quick Capture v2: one input, many destinations (src/lib/capture.ts).

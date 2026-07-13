@@ -1,17 +1,7 @@
 import { and, desc, eq, gte, lt } from "drizzle-orm";
 import { getDb, schema } from "@/db";
 import { dayStart, daysBetween, todayKey } from "@/lib/dates";
-
-export const CATEGORIES = [
-  "food",
-  "groceries",
-  "transport",
-  "shopping",
-  "bills",
-  "fun",
-  "health",
-  "other",
-] as const;
+export { CATEGORIES } from "@/lib/categories";
 
 export type ExpenseView = {
   entryId: string;

@@ -314,6 +314,17 @@ export default async function TodayPage() {
       </Link>
 
       <Link
+        href="/assistant"
+        className="flex items-center justify-between rounded-xl border border-black/10 px-4 py-3 text-sm transition-colors hover:bg-black/[.02] dark:border-white/10 dark:hover:bg-white/[.03]"
+      >
+        <span>
+          <span className="font-medium">Ask your personal planning assistant</span>{" "}
+          <span className="text-black/50 dark:text-white/50">— read-only answers from your data</span>
+        </span>
+        <span aria-hidden="true">→</span>
+      </Link>
+
+      <Link
         href="/lists"
         className="flex items-center justify-between rounded-xl border border-black/10 px-4 py-3 text-sm transition-colors hover:bg-black/[.02] dark:border-white/10 dark:hover:bg-white/[.03]"
       >

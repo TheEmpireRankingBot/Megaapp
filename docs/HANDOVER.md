@@ -17,7 +17,7 @@ The complete context needed to build on this codebase without guessing. Written 
 | Subscriptions | ✅ merged — renewal tracking, Paid flow, Today strip |
 | Weekly review | ✅ merged & verified — PR #2 |
 | Meals & groceries | ✅ built & verified — recipes, weekly dinner plan, generated grocery list, `buy` capture |
-| Deployment | ✅ Through Insights/planning pushed in `2a17320`; current Tier-4 bundle remains local |
+| Deployment | ✅ Through Tier-4 pushed in `0d44c60`; current Assistant bundle remains local |
 | Auth | ✅ optional Supabase SSR magic-link auth; zero-config local fallback retained |
 | Notifications | ✅ Web Push opt-in, due reminders, evening streak risk, weekend review, secured cron |
 | Insights | ✅ 12-week habits/mood/sleep patterns and eight-week spend trend |
@@ -29,13 +29,14 @@ The complete context needed to build on this codebase without guessing. Written 
 | People | ✅ birthdays, reconnect cadence, contact logs, gift ideas, reminders |
 | Home | ✅ possessions, warranties, recurring maintenance, reminders |
 | Vault | ✅ browser-side AES-GCM encryption; plaintext and passphrase never stored |
+| Assistant | ✅ local/optional-AI briefing plus confirmation-gated task, expense, event, and habit drafts; Vault excluded |
 | Tests | Scripted browser verification only (`scripts/e2e/`), no unit test framework |
 
 Working branch: `main` (local changes are not yet committed/pushed). Owner's locale defaults: Singapore time, SGD, metric.
 
 ## 2. Stack & architecture
 
-- **Next.js 16 (App Router, RSC) + TypeScript strict + Tailwind 4** — pages are async server components; **all mutations land in server actions**. Plain `<form action={...}>` is the default. Client components are limited to navigation, notification opt-in, and Vault encryption; Vault is the deliberate exception because plaintext must be encrypted before its server action receives anything.
+- **Next.js 16 (App Router, RSC) + TypeScript strict + Tailwind 4** — pages are async server components; **all mutations land in server actions**. Plain `<form action={...}>` is the default. Client components are limited to navigation, notification opt-in, Vault encryption, and the Assistant prompt/confirmation UI. Vault encrypts before its server action receives anything; Assistant questions stay read-only, while a recognized action draft needs a separate validated confirmation before it writes an item/entry plus an audit record.
 - **Drizzle ORM, Postgres dialect** (`src/db/schema.ts`). Two drivers behind one `getDb()` (`src/db/index.ts`):
   - `DATABASE_URL` unset → embedded **PGlite** persisted to `.pglite/`, **auto-migrates** on first connection. Delete `.pglite/` to reset dev data.
   - `DATABASE_URL` set → **postgres-js** (Supabase or any Postgres); apply migrations with `npm run db:migrate`.
@@ -71,9 +72,12 @@ src/lib/people.ts        birthdays and reconnect read model
 src/lib/home.ts          possession and maintenance read model
 src/lib/vault.ts         ciphertext-only Vault read model
 src/lib/life-admin.ts    one-query Today brief for travel/people/home
+src/lib/assistant.ts     compact data snapshot, local answers, optional Responses API call
+src/lib/assistant-actions.ts limited action grammar, proposal validation, audit labels
 src/lib/capture.ts      Quick Capture shorthand parser (pure, no IO)
 src/components/         nav, task-row, habit-row, journal-form, quick-capture,
-                        quick-add-task (full form), progress-ring, sparkline
+                        quick-add-task (full form), progress-ring, sparkline,
+                        vault-client, assistant-client
 src/app/<module>/page.tsx   today, tasks, habits, journal, money, health, review,
                            meals, insights, calendar, goals, lists, search
 src/app/api/export/route.ts
@@ -125,6 +129,7 @@ Core rule: **start every feature on `items` (things) + `entries` (timestamped lo
 | home | maintenance (items) | items (+reminders) | — | `{ assetItemId?, dueDate, cadenceMonths?, notes?, completedCount }` | — |
 | home | maintenance_completed (entries) | entries | — | `{ dueDate }` | → maintenance item |
 | vault | secret (items) | items | — | `{ version, algorithm, kdf, iterations, salt, iv, ciphertext }` | — |
+| assistant | action_applied (entries) | entries | — | `{ action, targetEntryId? }` | → created item when applicable |
 
 Semantics that matter:
 
@@ -168,6 +173,7 @@ npm run db:migrate     # against real Postgres (DATABASE_URL)
 - **Function/database region affects responsiveness.** The dashboard query waterfalls are parallelized and common filters indexed, but Vercel Functions must still be set to the Supabase database region in Vercel Settings → Functions.
 - **Calendar is local-first v1.** Manual events and the Today agenda are complete. Google Calendar two-way sync still needs Google OAuth credentials, token storage, conflict rules, and a sync worker.
 - **Vault passphrases are unrecoverable.** Every item is independently salted and encrypted with AES-GCM after PBKDF2-SHA256 (250,000 iterations) in the browser. Titles are inside the ciphertext; the database sees only `Encrypted item`. The current unlock flow assumes one passphrase across all items.
+- **Assistant provider is optional.** Without `OPENAI_API_KEY`, `/assistant` generates deterministic local briefings. With it, the server sends a capped question plus a compact summary (metrics and selected titles only) to the Responses API with `store: false`. Vault, journal text, transaction notes, contacts, serials, and passphrases never enter the snapshot. Recognized task/expense/event/habit commands are resolved locally and do not call the provider; a separate server-side confirmation revalidates the draft before writing it. Prompts and replies are not written to Megaapp's database, while confirmed action summaries receive an exportable audit entry.
 - **`formatDay`** omits the year — dates >6 months out (yearly renewals) display without year context.
 - **iOS PWA icon**: manifest icon is SVG; add PNG `apple-touch-icon` sizes for iOS.
 - **Import doesn't exist** — export is one-way JSON. CSV importers are planned per module (plan §3).
@@ -224,9 +230,18 @@ Each spec follows the house pattern: data on the primitives, queries in `src/lib
 - Vault encrypts title, type, and content in the browser with AES-GCM + PBKDF2 before the ciphertext-only server action runs. Search deliberately excludes Vault; JSON export contains encrypted payloads only.
 - **Verified**: `10-life-admin-vault.mjs` exercises all writes, recurring maintenance, reminders, Today/Search/export, proves Vault plaintext is absent at rest, decrypts it on-device, and checks every route at 390px.
 
-### 7.7 Recommended next release
+### 7.7 Assistant v1 + Actions v2 — shipped locally 2026-07-13
 
-Phase 5 Assistant: safe read-only tools over the existing modules, explicit confirmation for writes, and weekly-review drafting. It needs an LLM provider key and a strict tool/audit boundary. Google Calendar sync remains a separate integration project because it needs Google OAuth credentials and conflict handling.
+- `/assistant` has a helpful no-key local mode for focus, money, health, and weekly-review questions. It deliberately does not persist conversations.
+- Set `OPENAI_API_KEY` to enable the Responses API; `OPENAI_MODEL` is optional and defaults to `gpt-5.4-mini`. Informational questions use `store: false`; recognized action commands stay local.
+- `getAssistantSnapshot()` scopes every query by `userId` and only exposes compact safe data: no Vault ciphertext/plaintext, journal text, transaction notes, contacts, serials, or passphrases.
+- Task, expense, calendar-event, and habit commands create a reviewable local proposal. Only `confirmAssistantAction()` revalidates and writes it, then logs an `assistant/action_applied` summary. The original prompt/reply is not retained and Vault remains outside this boundary.
+- Weekly Review now links to Assistant for a structured draft; Today and desktop navigation link to `/assistant`.
+- **Verified**: `11-assistant.mjs` covers local answers, current data grounding, review drafting, no reply persistence, review/Today handoff, and 390px layouts. `12-assistant-actions.mjs` covers the draft boundary, all four confirmed writes, audit/export, and Assistant mobile layout.
+
+### 7.8 Recommended next release
+
+Tackle Google Calendar OAuth sync or module CSV importers. Keep provider calls optional, preserve explicit confirmation for every Assistant write, and do not widen the Vault boundary.
 
 ## 8. Product principles to preserve (from PLAN.md, enforced in code review)
 

@@ -4,7 +4,7 @@ A personal **Life OS** — one app for everything: tasks, habits, health, money,
 
 ## Status
 
-🏗️ **Building — Phases 0–3 plus Auth, Web Push, Insights, Lists & Media, and Search are shipped. Travel, People, Home, and the browser-encrypted Vault are built locally.** The master plan (vision, module catalog, roadmap) lives in [`docs/PLAN.md`](docs/PLAN.md). The engineering handover — architecture, exact data shapes, conventions, verification workflow, and build-ready specs for what's next — lives in [`docs/HANDOVER.md`](docs/HANDOVER.md); agents should also read [`AGENTS.md`](AGENTS.md).
+🏗️ **Building — Phases 0–4 plus Auth, Web Push, Insights, Search, and Assistant Actions are built. The Assistant has a useful local mode, optionally uses OpenAI when configured, and can only apply a task, expense, event, or habit after an explicit confirmation; it never includes Vault data.** The master plan (vision, module catalog, roadmap) lives in [`docs/PLAN.md`](docs/PLAN.md). The engineering handover — architecture, exact data shapes, conventions, verification workflow, and build-ready specs for what's next — lives in [`docs/HANDOVER.md`](docs/HANDOVER.md); agents should also read [`AGENTS.md`](AGENTS.md).
 
 ## Development
 
@@ -29,9 +29,10 @@ The app is a standard Next.js project; the intended setup (plan §4) is Vercel +
 4. For the most reliable SSR magic link, set the Magic Link email template button URL to: `{{ .SiteURL }}/auth/confirm?token_hash={{ .TokenHash }}&type=email`.
 5. Generate a Web Push key pair once with `npx web-push generate-vapid-keys --json`. In Vercel, add the public key as `NEXT_PUBLIC_VAPID_PUBLIC_KEY`, the private key as `VAPID_PRIVATE_KEY`, and `VAPID_SUBJECT` as a contact such as `mailto:you@example.com`. Never expose the private key.
 6. Generate a separate random value (at least 16 characters) for `CRON_SECRET`. Vercel automatically uses it to authorize the notification cron in `vercel.json`.
-7. Import the repo on [Vercel](https://vercel.com/new) and add all variables above plus `DATABASE_URL`, `NEXT_PUBLIC_SUPABASE_URL`, and `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` (legacy anon keys are also accepted). Use `npm run db:migrate && npm run build` as the Build Command so new migrations apply before the app starts.
-8. In Vercel Settings → Functions, choose the same region as the Supabase database; cross-region database calls make every screen feel slow.
-9. Deploy, request a sign-in link, then open the URL on your phone → Add to Home Screen. Enable notifications from Today. iPhone Web Push requires the installed Home Screen app.
+7. Optional Assistant AI: add `OPENAI_API_KEY` to Vercel. It uses the Responses API with `store: false` and the default `gpt-5.4-mini` model; set `OPENAI_MODEL` to override it. Without this key, `/assistant` stays fully usable in local briefing mode and sends nothing to an AI provider.
+8. Import the repo on [Vercel](https://vercel.com/new) and add all variables above plus `DATABASE_URL`, `NEXT_PUBLIC_SUPABASE_URL`, and `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` (legacy anon keys are also accepted). Use `npm run db:migrate && npm run build` as the Build Command so new migrations apply before the app starts.
+9. In Vercel Settings → Functions, choose the same region as the Supabase database; cross-region database calls make every screen feel slow.
+10. Deploy, request a sign-in link, then open the URL on your phone → Add to Home Screen. Enable notifications from Today. iPhone Web Push requires the installed Home Screen app.
 
 The committed Hobby-compatible schedule runs once daily at 21:00 Singapore time. The cron route also supports morning briefs if a paid plan or another scheduler invokes it between 06:00 and 10:00 Singapore time.
 

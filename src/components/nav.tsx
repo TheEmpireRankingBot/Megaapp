@@ -20,6 +20,7 @@ import {
   UsersRound,
   House,
   ShieldCheck,
+  Bot,
   type LucideIcon,
 } from "lucide-react";
 
@@ -48,6 +49,7 @@ const links: {
   { href: "/people", label: "People", icon: UsersRound, desktopOnly: true },
   { href: "/home", label: "Home", icon: House, desktopOnly: true },
   { href: "/vault", label: "Vault", icon: ShieldCheck, desktopOnly: true },
+  { href: "/assistant", label: "Assistant", icon: Bot, desktopOnly: true },
 ];
 
 export function Sidebar() {

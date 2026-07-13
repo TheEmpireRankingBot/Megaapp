@@ -154,9 +154,12 @@ export default async function ReviewPage() {
       </section>
 
       <section className="space-y-3">
-        <h2 className="text-sm font-semibold uppercase tracking-wide text-black/50 dark:text-white/50">
-          Reflection
-        </h2>
+        <div className="flex items-baseline justify-between gap-3">
+          <h2 className="text-sm font-semibold uppercase tracking-wide text-black/50 dark:text-white/50">
+            Reflection
+          </h2>
+          <Link href="/assistant" className="text-xs text-black/45 underline-offset-2 hover:underline dark:text-white/45">draft with Assistant</Link>
+        </div>
         <form action={saveReview} className="space-y-3">
           {PROMPTS.map((p) => (
             <label key={p.name} className="block">
@@ -201,3 +204,4 @@ export default async function ReviewPage() {
     </div>
   );
 }
+import Link from "next/link";
