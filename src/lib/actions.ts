@@ -1215,20 +1215,21 @@ export async function toggleTripPackingItem(formData: FormData) {
   if (!row) return;
   const payload = row.payload as TripPayload;
   if (!Array.isArray(payload.packingItems)) return;
+  const packingItems = payload.packingItems.map((packing) =>
+    packing.id === packingId ? { ...packing, done: !packing.done } : packing,
+  );
   await db
     .update(schema.items)
     .set({
       payload: {
         ...payload,
-        packingItems: payload.packingItems.map((packing) =>
-          packing.id === packingId ? { ...packing, done: !packing.done } : packing,
-        ),
+        packingItems,
       },
       updatedAt: new Date(),
     })
     .where(eq(schema.items.id, row.id));
   revalidateAll("/travel");
-  redirectFresh("/travel");
+  return true;
 }
 
 export async function addTripPackingItem(formData: FormData) {
@@ -1253,18 +1254,19 @@ export async function addTripPackingItem(formData: FormData) {
   const payload = row.payload as TripPayload;
   const packingItems = Array.isArray(payload.packingItems) ? payload.packingItems : [];
   if (packingItems.length >= 100 || packingItems.some((item) => item.name.toLowerCase() === name.toLowerCase())) return;
+  const packingItem = { id: crypto.randomUUID(), name, done: false };
   await db
     .update(schema.items)
     .set({
       payload: {
         ...payload,
-        packingItems: [...packingItems, { id: crypto.randomUUID(), name, done: false }],
+        packingItems: [...packingItems, packingItem],
       },
       updatedAt: new Date(),
     })
     .where(eq(schema.items.id, row.id));
   revalidateAll("/travel");
-  redirectFresh("/travel");
+  return packingItem;
 }
 
 export async function addItineraryStop(formData: FormData) {
@@ -1293,27 +1295,27 @@ export async function addItineraryStop(formData: FormData) {
   if (day < payload.startDate || day > payload.endDate) return;
   const itinerary = Array.isArray(payload.itinerary) ? payload.itinerary : [];
   if (itinerary.length >= 100) return;
+  const stop = {
+    id: crypto.randomUUID(),
+    day,
+    time: time || undefined,
+    title,
+    location: location || undefined,
+  };
   await db
     .update(schema.items)
     .set({
       payload: {
         ...payload,
-        itinerary: [
-          ...itinerary,
-          {
-            id: crypto.randomUUID(),
-            day,
-            time: time || undefined,
-            title,
-            location: location || undefined,
-          },
-        ].sort((a, b) => `${a.day}${a.time ?? ""}`.localeCompare(`${b.day}${b.time ?? ""}`)),
+        itinerary: [...itinerary, stop].sort((a, b) =>
+          `${a.day}${a.time ?? ""}`.localeCompare(`${b.day}${b.time ?? ""}`),
+        ),
       },
       updatedAt: new Date(),
     })
     .where(eq(schema.items.id, row.id));
   revalidateAll("/travel");
-  redirectFresh("/travel");
+  return stop;
 }
 
 export async function createPerson(formData: FormData) {

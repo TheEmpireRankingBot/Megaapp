@@ -1,18 +1,15 @@
-import { Check, Luggage, MapPin, Plane, Plus, X } from "lucide-react";
+import { Plane } from "lucide-react";
 import { getCurrentUser } from "@/lib/user";
-import { addDays, formatDay, todayKey } from "@/lib/dates";
+import { addDays, todayKey } from "@/lib/dates";
 import {
   BUILTIN_PACKING_TEMPLATES,
   getTravelData,
 } from "@/lib/travel";
 import {
-  addItineraryStop,
-  addTripPackingItem,
   createPackingTemplate,
   createTrip,
-  deleteItem,
-  toggleTripPackingItem,
 } from "@/lib/actions";
+import { TripCardClient } from "@/components/trip-card-client";
 
 export const metadata = { title: "Travel" };
 export const dynamic = "force-dynamic";
@@ -66,45 +63,7 @@ export default async function TravelPage() {
       ) : (
         <div className="space-y-6">
           {trips.map((trip) => (
-            <article key={trip.itemId} className="space-y-5 rounded-xl border border-black/10 p-4 dark:border-white/10">
-              <div className="flex items-start gap-3">
-                <div className="min-w-0 flex-1">
-                  <p className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-black/45 dark:text-white/45"><MapPin size={13} /> {trip.payload.destination}</p>
-                  <h2 className="mt-1 text-lg font-semibold">{trip.title}</h2>
-                  <p className="text-sm text-black/50 dark:text-white/50">{formatDay(trip.payload.startDate)} – {formatDay(trip.payload.endDate)} · {trip.daysUntil > 0 ? `${trip.daysUntil} days to go` : trip.daysUntil === 0 ? "starts today" : "in progress or past"}</p>
-                </div>
-                <form action={deleteItem}><input type="hidden" name="itemId" value={trip.itemId} /><button aria-label={`Delete ${trip.title}`} className="p-1 text-black/30 hover:text-red-500 dark:text-white/30"><X size={15} /></button></form>
-              </div>
-
-              <section>
-                <div className="flex items-center justify-between text-sm"><span className="flex items-center gap-2 font-medium"><Luggage size={15} /> Packing</span><span className="tabular-nums text-black/50 dark:text-white/50">{trip.packed}/{trip.total}</span></div>
-                <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-black/10 dark:bg-white/10"><div className="h-full rounded-full bg-emerald-500" style={{ width: `${trip.total ? (trip.packed / trip.total) * 100 : 0}%` }} /></div>
-                <div className="mt-3 grid gap-1 sm:grid-cols-2">
-                  {trip.payload.packingItems.map((packing) => (
-                    <form key={packing.id} action={toggleTripPackingItem}>
-                      <input type="hidden" name="itemId" value={trip.itemId} /><input type="hidden" name="packingId" value={packing.id} />
-                      <button className={`flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-sm hover:bg-black/[.03] dark:hover:bg-white/[.04] ${packing.done ? "text-black/40 line-through dark:text-white/40" : ""}`}>
-                        <span className={`flex h-4 w-4 items-center justify-center rounded border ${packing.done ? "border-emerald-500 bg-emerald-500 text-white" : "border-black/20 dark:border-white/20"}`}>{packing.done && <Check size={11} />}</span>{packing.name}
-                      </button>
-                    </form>
-                  ))}
-                </div>
-                <form action={addTripPackingItem} className="mt-2 flex gap-2"><input type="hidden" name="itemId" value={trip.itemId} /><input name="name" required placeholder="Add packing item" className="min-w-0 flex-1 rounded-lg border border-black/10 bg-transparent px-3 py-1.5 text-sm dark:border-white/10" /><button aria-label="Add packing item" className="rounded-lg border border-black/10 px-3 dark:border-white/10"><Plus size={15} /></button></form>
-              </section>
-
-              <section>
-                <h3 className="text-sm font-medium">Itinerary</h3>
-                {trip.payload.itinerary.length > 0 && <div className="mt-2 space-y-1">{trip.payload.itinerary.map((stop) => <div key={stop.id} className="flex gap-3 rounded-lg bg-black/[.025] px-3 py-2 text-sm dark:bg-white/[.04]"><span className="w-24 shrink-0 text-xs text-black/50 dark:text-white/50">{formatDay(stop.day)} {stop.time}</span><span className="min-w-0"><span className="font-medium">{stop.title}</span>{stop.location && <span className="text-black/45 dark:text-white/45"> · {stop.location}</span>}</span></div>)}</div>}
-                <form action={addItineraryStop} className="mt-2 flex flex-wrap gap-2">
-                  <input type="hidden" name="itemId" value={trip.itemId} />
-                  <input name="day" type="date" required defaultValue={trip.payload.startDate} min={trip.payload.startDate} max={trip.payload.endDate} className="rounded-lg border border-black/10 bg-transparent px-2 py-1.5 text-sm dark:border-white/10 dark:[color-scheme:dark]" />
-                  <input name="time" type="time" className="rounded-lg border border-black/10 bg-transparent px-2 py-1.5 text-sm dark:border-white/10 dark:[color-scheme:dark]" />
-                  <input name="title" required placeholder="Plan or booking" className="min-w-36 flex-1 rounded-lg border border-black/10 bg-transparent px-3 py-1.5 text-sm dark:border-white/10" />
-                  <input name="location" placeholder="Place" className="min-w-32 flex-1 rounded-lg border border-black/10 bg-transparent px-3 py-1.5 text-sm dark:border-white/10" />
-                  <button className="rounded-lg border border-black/10 px-3 py-1.5 text-sm dark:border-white/10">Add stop</button>
-                </form>
-              </section>
-            </article>
+            <TripCardClient key={trip.itemId} trip={trip} />
           ))}
         </div>
       )}
