@@ -5,13 +5,13 @@ const browser = await chromium.launch({
   executablePath: process.env.CHROMIUM_PATH || undefined,
 });
 const page = await browser.newPage({ viewport: { width: 1280, height: 1000 } });
-const base = "http://localhost:3000";
+const base = process.env.BASE_URL || "http://localhost:3000";
 const settle = () => page.waitForTimeout(1200);
 
 async function capture(text) {
   await page.fill('input[name="text"]', text);
   await page.press('input[name="text"]', "Enter");
-  await settle();
+  await page.waitForFunction(() => JSON.parse(localStorage.getItem("megaapp:quick-capture-queue:v1") || "[]").length === 0);
 }
 
 // Seed one fresh signal in each source module through the real UI.

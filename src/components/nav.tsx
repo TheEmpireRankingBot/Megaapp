@@ -21,6 +21,7 @@ import {
   House,
   ShieldCheck,
   Bot,
+  DatabaseZap,
   type LucideIcon,
 } from "lucide-react";
 
@@ -50,6 +51,7 @@ const links: {
   { href: "/home", label: "Home", icon: House, desktopOnly: true },
   { href: "/vault", label: "Vault", icon: ShieldCheck, desktopOnly: true },
   { href: "/assistant", label: "Assistant", icon: Bot, desktopOnly: true },
+  { href: "/import", label: "Import", icon: DatabaseZap, desktopOnly: true },
 ];
 
 export function Sidebar() {

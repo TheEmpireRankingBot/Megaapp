@@ -7,7 +7,7 @@ const browser = await chromium.launch({
 });
 const context = await browser.newContext({ viewport: { width: 390, height: 844 } });
 const page = await context.newPage();
-const base = "http://localhost:3000";
+const base = process.env.BASE_URL || "http://localhost:3000";
 
 await page.goto(`${base}/today`, { waitUntil: "networkidle" });
 console.log(

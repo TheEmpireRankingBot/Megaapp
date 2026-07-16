@@ -13,6 +13,11 @@ export function getSupabaseConfig(): SupabaseConfig | null {
       "Supabase Auth is partially configured. Set both NEXT_PUBLIC_SUPABASE_URL and a publishable/anon key, or neither for local mode.",
     );
   }
+  if (!url && !key && (process.env.VERCEL || process.env.MEGAAPP_REQUIRE_EXTERNAL_DB === "1")) {
+    throw new Error(
+      "Supabase Auth is required for a hosted Megaapp. Set NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY.",
+    );
+  }
   return url && key ? { url, key } : null;
 }
 

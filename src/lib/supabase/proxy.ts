@@ -4,7 +4,10 @@ import { getSupabaseConfig } from "@/lib/supabase/config";
 
 export async function updateSupabaseSession(request: NextRequest) {
   // Vercel calls cron routes with CRON_SECRET rather than a user session.
-  if (request.nextUrl.pathname.startsWith("/api/cron/")) {
+  if (
+    request.nextUrl.pathname.startsWith("/api/cron/") ||
+    request.nextUrl.pathname === "/api/health"
+  ) {
     return NextResponse.next({ request });
   }
   const config = getSupabaseConfig();

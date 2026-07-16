@@ -6,7 +6,7 @@ const browser = await chromium.launch({
   executablePath: process.env.CHROMIUM_PATH || undefined,
 });
 const page = await browser.newPage({ viewport: { width: 1280, height: 1100 } });
-const base = "http://localhost:3000";
+const base = process.env.BASE_URL || "http://localhost:3000";
 const settle = () => page.waitForTimeout(1200);
 
 const today = new Date();
@@ -20,7 +20,7 @@ async function addSub(name, amount, cadence, next) {
   await form.locator('select[name="cadence"]').selectOption(cadence);
   await form.locator('input[name="next"]').fill(next);
   await form.locator('button:has-text("Add")').click();
-  await settle();
+  await page.getByText(name, { exact: true }).waitFor();
 }
 
 // --- Create subscriptions: one due today, one in 3 days, one yearly far out ---
@@ -33,7 +33,7 @@ console.log("due today label:", (await page.locator("text=due today").count()) >
 console.log("renews in 3d:", (await page.locator("text=renews in 3d").count()) > 0);
 console.log("paid button count:", await page.locator('button:has-text("Paid")').count());
 const monthlyTotal = await page.locator("text=/month").first().textContent();
-console.log("monthly equivalent:", monthlyTotal); // 19.98 + 88 + 119.88/12 = 117.97
+console.log("monthly equivalent correct:", monthlyTotal?.includes("$117.97") === true); // 19.98 + 88 + 119.88/12 = 117.97
 
 // --- Mark Netflix paid: expense logged, renewal advances a month ---
 await page.click('button:has-text("Paid")');

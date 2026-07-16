@@ -5,9 +5,13 @@ These are the project's test suite: Playwright scripts that drive the **real UI*
 ## Running
 
 ```bash
-rm -rf .pglite                 # scripts create data — start from a clean dev DB
-npm run build && npm run start # or npm run dev
-npm i -D playwright-core       # already in devDependencies
+PGLITE_DATA_DIR=.pglite-alpha npm run start
+BASE_URL=http://localhost:3000 npm run alpha:e2e
+```
+
+The isolated `PGLITE_DATA_DIR` keeps normal local data intact. The orchestrator runs the local scenarios in order and fails on a non-zero script exit or any rendered assertion that prints `false`. To run individual scenarios:
+
+```bash
 node scripts/e2e/01-daily-loop.mjs
 node scripts/e2e/02-capture-money-health.mjs
 node scripts/e2e/03-subscriptions.mjs
@@ -18,6 +22,9 @@ node scripts/e2e/09-planning-discovery.mjs
 node scripts/e2e/10-life-admin-vault.mjs
 node scripts/e2e/11-assistant.mjs
 node scripts/e2e/12-assistant-actions.mjs
+node scripts/e2e/13-import-center.mjs
+node scripts/e2e/14-alpha-readiness.mjs
+node scripts/e2e/15-offline-capture.mjs
 ```
 
 Auth routing is a separate run because it starts the server with placeholder

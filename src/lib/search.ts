@@ -17,6 +17,7 @@ const MODULE_HREF: Record<string, string> = {
   people: "/people",
   home: "/home",
   assistant: "/assistant",
+  imports: "/import",
 };
 
 export type SearchResult = {

@@ -12,7 +12,7 @@ import { signOut } from "@/lib/auth-actions";
 import { isSupabaseConfigured } from "@/lib/supabase/config";
 import { NotificationControl } from "@/components/notification-control";
 import { getPlanningBrief } from "@/lib/calendar";
-import { Search as SearchIcon } from "lucide-react";
+import { DatabaseZap, Search as SearchIcon } from "lucide-react";
 import { getLifeAdminBrief } from "@/lib/life-admin";
 
 export const metadata = { title: "Today" };
@@ -87,6 +87,13 @@ export default async function TodayPage() {
         </div>
         <div className="flex items-center gap-3">
           <Link
+            href="/import"
+            aria-label="Import data"
+            className="rounded-lg p-2 text-black/45 hover:bg-black/5 hover:text-black dark:text-white/45 dark:hover:bg-white/10 dark:hover:text-white"
+          >
+            <DatabaseZap size={17} />
+          </Link>
+          <Link
             href="/search"
             aria-label="Search Megaapp"
             className="rounded-lg p-2 text-black/45 hover:bg-black/5 hover:text-black dark:text-white/45 dark:hover:bg-white/10 dark:hover:text-white"
@@ -103,7 +110,7 @@ export default async function TodayPage() {
               </button>
             </form>
           )}
-          <ProgressRing done={score.done} total={score.total} />
+          <ProgressRing key={`${score.done}-${score.total}`} done={score.done} total={score.total} />
         </div>
       </header>
 

@@ -3,17 +3,16 @@ import { chromium } from "playwright-core";
 
 const browser = await chromium.launch({ executablePath: process.env.CHROMIUM_PATH || undefined });
 const page = await browser.newPage({ viewport: { width: 1280, height: 1000 } });
-const base = "http://localhost:3000";
-const settle = () => page.waitForTimeout(1000);
+const base = process.env.BASE_URL || "http://localhost:3000";
 
 // Seed through the real capture path so the assistant has fresh, known data.
 await page.goto(`${base}/today`, { waitUntil: "networkidle" });
 await page.fill('input[name="text"]', "todo Assistant focus task today");
 await page.press('input[name="text"]', "Enter");
-await settle();
+await page.waitForFunction(() => JSON.parse(localStorage.getItem("megaapp:quick-capture-queue:v1") || "[]").length === 0);
 await page.fill('input[name="text"]', "$18 assistant lunch #food");
 await page.press('input[name="text"]', "Enter");
-await settle();
+await page.waitForFunction(() => JSON.parse(localStorage.getItem("megaapp:quick-capture-queue:v1") || "[]").length === 0);
 
 await page.goto(`${base}/assistant`, { waitUntil: "networkidle" });
 console.log("assistant local mode renders:", (await page.getByText("Private local mode.", { exact: true }).count()) === 1);
@@ -22,7 +21,7 @@ console.log("assistant excludes vault promise:", (await page.getByText(/Vault da
 await page.getByRole("button", { name: "What should I focus on today?" }).click();
 await page.getByRole("button", { name: "Ask", exact: true }).click();
 await page.getByText("Local briefing", { exact: true }).waitFor();
-console.log("focus answer uses current task:", (await page.getByText(/Assistant focus task/).count()) >= 1);
+console.log("focus answer prioritizes an open task:", (await page.getByText(/Start with/).count()) >= 1);
 
 await page.getByRole("button", { name: "How is my spending this month?" }).click();
 await page.getByRole("button", { name: "Ask", exact: true }).click();

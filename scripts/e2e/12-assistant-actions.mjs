@@ -3,7 +3,7 @@ import { chromium } from "playwright-core";
 
 const browser = await chromium.launch({ executablePath: process.env.CHROMIUM_PATH || undefined });
 const page = await browser.newPage({ viewport: { width: 1280, height: 1050 } });
-const base = "http://localhost:3000";
+const base = process.env.BASE_URL || "http://localhost:3000";
 const settle = () => page.waitForTimeout(1000);
 const runId = Date.now().toString();
 

@@ -1,0 +1,48 @@
+name: Alpha gate
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: alpha-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  alpha:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm audit --omit=dev --audit-level=high
+      - run: npm run lint
+      - run: npm run build
+      - run: npm run alpha:check
+      - name: Install Chromium
+        run: npx playwright install --with-deps chromium
+      - name: Run clean alpha browser suite
+        shell: bash
+        run: |
+          PGLITE_DATA_DIR=.pglite-alpha-ci PORT=3100 npm run start > alpha-server.log 2>&1 &
+          server_pid=$!
+          trap 'kill "$server_pid" 2>/dev/null || true' EXIT
+          BASE_URL=http://localhost:3100 npm run alpha:e2e
+      - name: Upload browser evidence on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: alpha-browser-evidence
+          path: |
+            alpha-server.log
+            e2e*.png
+          if-no-files-found: ignore

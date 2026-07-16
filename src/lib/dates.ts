@@ -127,6 +127,16 @@ export function formatTime(date: Date): string {
   }).format(date);
 }
 
+/** Stable 24-hour wall-clock key in Singapore, e.g. "15:30". */
+export function timeKey(date: Date): string {
+  return new Intl.DateTimeFormat("en-GB", {
+    timeZone: TIMEZONE,
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  }).format(date);
+}
+
 export function isSunday(key: string = todayKey()): boolean {
   return dayNoon(key).getUTCDay() === 0;
 }

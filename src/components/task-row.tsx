@@ -1,19 +1,45 @@
+"use client";
+
+import { type FormEvent, useState } from "react";
+import { useRouter } from "next/navigation";
 import { Check, Repeat, X } from "lucide-react";
 import { toggleTask, deleteItem } from "@/lib/actions";
 import { formatDay, todayKey } from "@/lib/dates";
 import type { TaskView } from "@/lib/data";
 
 export function TaskRow({ task }: { task: TaskView }) {
-  const checked = task.done || task.completedToday;
+  const router = useRouter();
+  const [checked, setChecked] = useState(task.done || task.completedToday);
+  const [pending, setPending] = useState(false);
   const overdue =
     !checked && task.dueKey !== null && task.dueKey < todayKey();
 
   return (
     <div className="group flex items-center gap-3 rounded-lg px-2 py-1.5 hover:bg-black/[.03] dark:hover:bg-white/[.04]">
-      <form action={toggleTask}>
+      <form
+        onSubmit={async (event: FormEvent<HTMLFormElement>) => {
+          event.preventDefault();
+          if (pending) return;
+          const formData = new FormData(event.currentTarget);
+          const next = !checked;
+          setChecked(next);
+          setPending(true);
+          window.dispatchEvent(new CustomEvent("megaapp:progress-delta", { detail: { delta: next ? 1 : -1 } }));
+          try {
+            await toggleTask(formData);
+            router.refresh();
+          } catch {
+            setChecked(!next);
+            window.dispatchEvent(new CustomEvent("megaapp:progress-delta", { detail: { delta: next ? -1 : 1 } }));
+          } finally {
+            setPending(false);
+          }
+        }}
+      >
         <input type="hidden" name="taskId" value={task.taskId} />
         <button
           type="submit"
+          disabled={pending}
           aria-label={checked ? "Mark not done" : "Mark done"}
           className={`flex size-5 items-center justify-center rounded-full border transition-colors ${
             checked

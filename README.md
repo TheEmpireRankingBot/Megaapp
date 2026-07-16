@@ -4,7 +4,7 @@ A personal **Life OS** — one app for everything: tasks, habits, health, money,
 
 ## Status
 
-🏗️ **Building — Phases 0–4 plus Auth, Web Push, Insights, Search, and Assistant Actions are built. The Assistant has a useful local mode, optionally uses OpenAI when configured, and can only apply a task, expense, event, or habit after an explicit confirmation; it never includes Vault data.** The master plan (vision, module catalog, roadmap) lives in [`docs/PLAN.md`](docs/PLAN.md). The engineering handover — architecture, exact data shapes, conventions, verification workflow, and build-ready specs for what's next — lives in [`docs/HANDOVER.md`](docs/HANDOVER.md); agents should also read [`AGENTS.md`](AGENTS.md).
+🏗️ **Building — Phases 0–4 plus Auth, Web Push, offline Quick Capture, Insights, Search, Assistant Actions, and a CSV Import Center are built. Quick Capture opens in a dead zone, queues safely on-device, preserves the capture time, and retries idempotently on reconnect. Tasks, expenses, habits, and local calendar events can also be previewed, validated, deduplicated, and imported in confirmed CSV batches. The Assistant optionally uses OpenAI when configured and never includes Vault data.** The master plan (vision, module catalog, roadmap) lives in [`docs/PLAN.md`](docs/PLAN.md). The engineering handover — architecture, exact data shapes, conventions, verification workflow, and build-ready specs for what's next — lives in [`docs/HANDOVER.md`](docs/HANDOVER.md); agents should also read [`AGENTS.md`](AGENTS.md).
 
 ## Development
 
@@ -12,6 +12,8 @@ A personal **Life OS** — one app for everything: tasks, habits, health, money,
 npm install
 npm run dev        # http://localhost:3000
 ```
+
+Before an alpha release, run `npm run lint`, `npm run build`, and `npm run alpha:check`. GitHub Actions repeats those gates plus the full clean-browser suite on pushes and pull requests. The complete clean-database and production acceptance procedure is in [`docs/ALPHA.md`](docs/ALPHA.md).
 
 No configuration needed: without a `DATABASE_URL`, the app runs on an embedded Postgres ([PGlite](https://pglite.dev)) persisted to `.pglite/`, and migrations apply automatically on first connection. To use a real Postgres (e.g. Supabase), set `DATABASE_URL` and run `npm run db:migrate`.
 
@@ -33,6 +35,8 @@ The app is a standard Next.js project; the intended setup (plan §4) is Vercel +
 8. Import the repo on [Vercel](https://vercel.com/new) and add all variables above plus `DATABASE_URL`, `NEXT_PUBLIC_SUPABASE_URL`, and `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` (legacy anon keys are also accepted). Use `npm run db:migrate && npm run build` as the Build Command so new migrations apply before the app starts.
 9. In Vercel Settings → Functions, choose the same region as the Supabase database; cross-region database calls make every screen feel slow.
 10. Deploy, request a sign-in link, then open the URL on your phone → Add to Home Screen. Enable notifications from Today. iPhone Web Push requires the installed Home Screen app.
+
+After deploy, run `BASE_URL=https://your-app.vercel.app npm run alpha:production-smoke`. It verifies external database/auth/push health, login protection, cron authorization, and public PWA assets without changing production data. Hosted deployments fail closed when required configuration is missing.
 
 The committed Hobby-compatible schedule runs once daily at 21:00 Singapore time. The cron route also supports morning briefs if a paid plan or another scheduler invokes it between 06:00 and 10:00 Singapore time.
 

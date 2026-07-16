@@ -6,12 +6,15 @@ const browser = await chromium.launch({
   executablePath: process.env.CHROMIUM_PATH || undefined,
 });
 const page = await browser.newPage({ viewport: { width: 1280, height: 1100 } });
-const base = "http://localhost:3000";
+const base = process.env.BASE_URL || "http://localhost:3000";
 const settle = () => page.waitForTimeout(1200);
 
-// --- Today (Sunday) should prompt the review ---
+// --- Today should prompt the review only on the weekend ---
 await page.goto(`${base}/today`, { waitUntil: "networkidle" });
-console.log("review prompt on today:", (await page.locator("text=Close out the week").count()) > 0);
+const weekday = new Intl.DateTimeFormat("en-US", { timeZone: "Asia/Singapore", weekday: "long" }).format(new Date());
+const shouldPrompt = weekday === "Saturday" || weekday === "Sunday";
+const hasPrompt = (await page.locator("text=Close out the week").count()) > 0;
+console.log("review prompt follows weekend schedule:", hasPrompt === shouldPrompt);
 
 // --- Review page: auto-drafted stats from the week's real data ---
 await page.goto(`${base}/review`, { waitUntil: "networkidle" });
@@ -28,7 +31,7 @@ await page.fill('textarea[name="wins"]', "Shipped four phases of Megaapp.");
 await page.fill('textarea[name="challenges"]', "Skipped water two days.");
 await page.fill('textarea[name="focus"]', "Deploy it and use it daily on my phone.");
 await page.click('button:has-text("Save review")');
-await settle();
+await page.locator('button:has-text("Update review")').waitFor();
 console.log("saved (button flips):", (await page.locator('button:has-text("Update review")').count()) > 0);
 await page.screenshot({ path: "e2e4-review.png" });
 

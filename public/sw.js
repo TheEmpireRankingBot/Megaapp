@@ -1,3 +1,26 @@
+self.addEventListener("install", (event) => {
+  event.waitUntil(
+    caches
+      .open("megaapp-offline-v1")
+      .then((cache) => cache.addAll(["/offline.html", "/icon-192.png", "/icon-512.png"]))
+      .then(() => self.skipWaiting()),
+  );
+});
+
+self.addEventListener("activate", (event) => {
+  event.waitUntil(
+    caches
+      .keys()
+      .then((keys) => Promise.all(keys.filter((key) => key.startsWith("megaapp-offline-") && key !== "megaapp-offline-v1").map((key) => caches.delete(key))))
+      .then(() => self.clients.claim()),
+  );
+});
+
+self.addEventListener("fetch", (event) => {
+  if (event.request.mode !== "navigate") return;
+  event.respondWith(fetch(event.request).catch(() => caches.match("/offline.html")));
+});
+
 self.addEventListener("push", (event) => {
   let payload = {
     title: "Megaapp",
@@ -16,8 +39,8 @@ self.addEventListener("push", (event) => {
   event.waitUntil(
     self.registration.showNotification(payload.title, {
       body: payload.body,
-      icon: "/icon.svg",
-      badge: "/icon.svg",
+      icon: "/icon-192.png",
+      badge: "/icon-192.png",
       tag: payload.tag,
       data: { url: payload.url },
     }),

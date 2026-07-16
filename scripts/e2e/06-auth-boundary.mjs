@@ -23,6 +23,11 @@ console.log("expired-link copy shown:", (await page.getByText(/invalid or has ex
 
 const manifest = await page.request.get(`${base}/manifest.webmanifest`);
 console.log("PWA manifest remains public:", manifest.ok());
+const offline = await page.request.get(`${base}/offline.html`);
+console.log(
+  "offline capture shell remains public:",
+  offline.ok() && (await offline.text()).includes("Capture now. Sync later."),
+);
 
 await page.screenshot({ path: "e2e6-login-mobile.png", fullPage: true });
 await browser.close();

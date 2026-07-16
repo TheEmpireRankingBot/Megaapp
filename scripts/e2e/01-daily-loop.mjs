@@ -6,7 +6,7 @@ const browser = await chromium.launch({
   executablePath: process.env.CHROMIUM_PATH || undefined,
 });
 const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
-const base = "http://localhost:3000";
+const base = process.env.BASE_URL || "http://localhost:3000";
 const settle = () => page.waitForTimeout(1200);
 
 // --- Tasks: quick add via full form, one plain, one recurring ---
@@ -33,12 +33,12 @@ await page.screenshot({ path: "e2e-tasks.png" });
 await page.goto(`${base}/habits`, { waitUntil: "networkidle" });
 await page.fill('input[name="title"]', "Read 20 minutes");
 await page.press('input[name="title"]', "Enter");
-await settle();
+await page.getByText("Read 20 minutes", { exact: true }).waitFor();
 await page.fill('input[name="title"]', "Drink 2L water");
 await page.press('input[name="title"]', "Enter");
-await settle();
+await page.getByText("Drink 2L water", { exact: true }).waitFor();
 await page.click('button[aria-label="Check Read 20 minutes"]');
-await settle();
+await page.getByText("1 day streak", { exact: true }).waitFor();
 console.log("habit streak text:", await page.locator("text=1 day streak").count());
 await page.screenshot({ path: "e2e-habits.png" });
 
@@ -59,13 +59,17 @@ console.log("today shows groceries:", await page.locator("text=Buy groceries").c
 console.log("today shows habits:", await page.locator("text=Read 20 minutes").count());
 const ringBefore = await page.locator("svg[aria-label]").getAttribute("aria-label");
 console.log("ring before:", ringBefore);
+const ringMatch = ringBefore?.match(/^(\d+) of (\d+) done$/);
+if (!ringMatch) throw new Error(`Unexpected progress ring label: ${ringBefore}`);
 await page.locator('div:has(> form) >> text=Buy groceries').first();
 // complete "Buy groceries" via its row toggle
 const row = page.locator("div.group", { hasText: "Buy groceries" }).first();
 await row.locator('button[aria-label="Mark done"]').click();
-await settle();
+const expectedRing = `${Number(ringMatch[1]) + 1} of ${ringMatch[2]} done`;
+await page.waitForFunction((label) => document.querySelector("svg[aria-label]")?.getAttribute("aria-label") === label, expectedRing);
 const ringAfter = await page.locator("svg[aria-label]").getAttribute("aria-label");
 console.log("ring after:", ringAfter);
+console.log("ring advances immediately:", ringAfter === expectedRing);
 await page.screenshot({ path: "e2e-today-desktop.png" });
 
 // Mobile screenshot

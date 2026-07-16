@@ -5,7 +5,7 @@ const browser = await chromium.launch({
   executablePath: process.env.CHROMIUM_PATH || undefined,
 });
 const page = await browser.newPage({ viewport: { width: 1280, height: 1000 } });
-const base = "http://localhost:3000";
+const base = process.env.BASE_URL || "http://localhost:3000";
 const settle = () => page.waitForTimeout(1200);
 
 // Calendar event.
@@ -37,14 +37,14 @@ await settle();
 console.log("goal saved:", (await page.getByText("Run Megaapp planning from one place", { exact: true }).count()) === 1);
 console.log("goal starts at zero:", (await page.getByText("0/3 steps complete", { exact: true }).count()) === 1);
 await page.getByRole("button", { name: /Use the calendar for one week/ }).click();
-await settle();
+await page.getByText("1/3 steps complete", { exact: true }).waitFor();
 console.log("milestone advances progress:", (await page.getByText("1/3 steps complete", { exact: true }).count()) === 1);
 
 // Quick Capture feeds the media backlog; the full form adds a show.
 await page.goto(`${base}/today`, { waitUntil: "networkidle" });
 await page.fill('input[name="text"]', "read Dune");
 await page.press('input[name="text"]', "Enter");
-await settle();
+await page.waitForFunction(() => JSON.parse(localStorage.getItem("megaapp:quick-capture-queue:v1") || "[]").length === 0);
 console.log("today agenda includes event:", (await page.getByText("Planning sync", { exact: true }).count()) === 1);
 console.log("today includes current goal:", (await page.getByText("Run Megaapp planning from one place", { exact: true }).count()) === 1);
 

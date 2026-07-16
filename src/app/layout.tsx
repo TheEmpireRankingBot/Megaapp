@@ -1,6 +1,7 @@
 import type { Metadata, Viewport } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import { Sidebar, BottomNav } from "@/components/nav";
+import { ServiceWorkerRegistration } from "@/components/service-worker-registration";
 import "./globals.css";
 
 const geistSans = Geist({
@@ -17,6 +18,14 @@ export const metadata: Metadata = {
   title: { default: "Megaapp", template: "%s · Megaapp" },
   description: "One app for your whole life.",
   manifest: "/manifest.webmanifest",
+  icons: {
+    icon: [
+      { url: "/icon-192.png", sizes: "192x192", type: "image/png" },
+      { url: "/icon-512.png", sizes: "512x512", type: "image/png" },
+      { url: "/icon.svg", type: "image/svg+xml" },
+    ],
+    apple: [{ url: "/apple-touch-icon.png", sizes: "180x180", type: "image/png" }],
+  },
   appleWebApp: { capable: true, title: "Megaapp", statusBarStyle: "default" },
 };
 
@@ -38,6 +47,7 @@ export default function RootLayout({
       className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
     >
       <body className="min-h-full">
+        <ServiceWorkerRegistration />
         <div className="mx-auto flex min-h-screen max-w-6xl">
           <Sidebar />
           <main className="min-w-0 flex-1 p-4 pb-24 md:p-8 md:pb-8">

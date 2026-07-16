@@ -6,7 +6,7 @@ The complete context needed to build on this codebase without guessing. Written 
 
 ---
 
-## 1. Current state (as of 2026-07-13)
+## 1. Current state (as of 2026-07-15)
 
 | Area | Status |
 |---|---|
@@ -17,7 +17,7 @@ The complete context needed to build on this codebase without guessing. Written 
 | Subscriptions | ✅ merged — renewal tracking, Paid flow, Today strip |
 | Weekly review | ✅ merged & verified — PR #2 |
 | Meals & groceries | ✅ built & verified — recipes, weekly dinner plan, generated grocery list, `buy` capture |
-| Deployment | ✅ Through Tier-4 pushed in `0d44c60`; current Assistant bundle remains local |
+| Deployment | ✅ Through Assistant Actions pushed in `3038372`; current Import Center bundle remains local |
 | Auth | ✅ optional Supabase SSR magic-link auth; zero-config local fallback retained |
 | Notifications | ✅ Web Push opt-in, due reminders, evening streak risk, weekend review, secured cron |
 | Insights | ✅ 12-week habits/mood/sleep patterns and eight-week spend trend |
@@ -30,18 +30,20 @@ The complete context needed to build on this codebase without guessing. Written 
 | Home | ✅ possessions, warranties, recurring maintenance, reminders |
 | Vault | ✅ browser-side AES-GCM encryption; plaintext and passphrase never stored |
 | Assistant | ✅ local/optional-AI briefing plus confirmation-gated task, expense, event, and habit drafts; Vault excluded |
-| Tests | Scripted browser verification only (`scripts/e2e/`), no unit test framework |
+| Import Center | ✅ CSV preview, validation, confirmed batch import, dedupe, and audit for tasks/expenses/habits/calendar |
+| Alpha hardening | ✅ recovery boundaries, health endpoint, PNG install icons, fail-closed hosted config, isolated acceptance runner, offline Quick Capture |
+| Tests | Scripted browser verification (`npm run alpha:e2e`), no unit test framework |
 
 Working branch: `main` (local changes are not yet committed/pushed). Owner's locale defaults: Singapore time, SGD, metric.
 
 ## 2. Stack & architecture
 
-- **Next.js 16 (App Router, RSC) + TypeScript strict + Tailwind 4** — pages are async server components; **all mutations land in server actions**. Plain `<form action={...}>` is the default. Client components are limited to navigation, notification opt-in, Vault encryption, and the Assistant prompt/confirmation UI. Vault encrypts before its server action receives anything; Assistant questions stay read-only, while a recognized action draft needs a separate validated confirmation before it writes an item/entry plus an audit record.
+- **Next.js 16 (App Router, RSC) + TypeScript strict + Tailwind 4** — pages are async server components; **all mutations land in server actions**. Plain `<form action={...}>` remains the default, while frequent controls use thin optimistic clients with rollback for immediate feedback (tasks, habits, expenses, subscriptions, goals, and media). Vault encrypts before its server action receives anything; Assistant questions stay read-only, while a recognized action draft needs a separate validated confirmation before it writes an item/entry plus an audit record. Import previews submit normalized rows to a scoped server action that revalidates and deduplicates them before writing.
 - **Drizzle ORM, Postgres dialect** (`src/db/schema.ts`). Two drivers behind one `getDb()` (`src/db/index.ts`):
   - `DATABASE_URL` unset → embedded **PGlite** persisted to `.pglite/`, **auto-migrates** on first connection. Delete `.pglite/` to reset dev data.
   - `DATABASE_URL` set → **postgres-js** (Supabase or any Postgres); apply migrations with `npm run db:migrate`.
   - `next.config.ts` must keep `serverExternalPackages: ["@electric-sql/pglite", "postgres"]`.
-- **PWA**: `public/manifest.webmanifest`, installable, start URL `/today`. Icon is SVG-only (iOS wants a PNG `apple-touch-icon` — open todo).
+- **PWA**: `public/manifest.webmanifest`, installable, start URL `/today`, with 192/512 PNG icons and a 180px Apple touch icon. The service worker registers independently of optional Web Push and caches only the static, auth-public `/offline.html` capture shell plus icons; private server-rendered pages are never cached.
 - **No API routes for app logic** — the single exception is `GET /api/export` (full JSON export). New tables MUST be added to the export payload (plan principle: "no feature ships without export").
 
 ### File map
@@ -74,10 +76,12 @@ src/lib/vault.ts         ciphertext-only Vault read model
 src/lib/life-admin.ts    one-query Today brief for travel/people/home
 src/lib/assistant.ts     compact data snapshot, local answers, optional Responses API call
 src/lib/assistant-actions.ts limited action grammar, proposal validation, audit labels
+src/lib/imports.ts       pure CSV parser, templates, normalized record validation
+src/lib/import-history.ts scoped confirmed-batch audit query
 src/lib/capture.ts      Quick Capture shorthand parser (pure, no IO)
 src/components/         nav, task-row, habit-row, journal-form, quick-capture,
                         quick-add-task (full form), progress-ring, sparkline,
-                        vault-client, assistant-client
+                        vault-client, assistant-client, import-client
 src/app/<module>/page.tsx   today, tasks, habits, journal, money, health, review,
                            meals, insights, calendar, goals, lists, search
 src/app/api/export/route.ts
@@ -118,6 +122,7 @@ Core rule: **start every feature on `items` (things) + `entries` (timestamped lo
 | meals | plan (items) | items | — | `{ days: Record<dayKey, { dinner?: recipeItemId }> }` | — |
 | meals | grocery (items) | items | — | `{ items: { name: string, done: boolean }[] }` | — |
 | notifications | sent (entries) | entries | — | `{ key, tag }` | — |
+| capture | receipt (entries) | entries | — | `{ source }` | Client UUID is the entry ID; atomic receipt + domain write makes retries idempotent. |
 | calendar | event (items) | items | — | `{ startAt, endAt?, allDay, location?, notes? }` | — |
 | goals | goal (items) | items | — | `{ horizon, targetDate?, linkedItemIds, milestones: { id, title, done }[] }` | — |
 | lists | media (items) | items | — | `{ kind, state, rating?, notes? }` | — |
@@ -130,6 +135,7 @@ Core rule: **start every feature on `items` (things) + `entries` (timestamped lo
 | home | maintenance_completed (entries) | entries | — | `{ dueDate }` | → maintenance item |
 | vault | secret (items) | items | — | `{ version, algorithm, kdf, iterations, salt, iv, ciphertext }` | — |
 | assistant | action_applied (entries) | entries | — | `{ action, targetEntryId? }` | → created item when applicable |
+| imports | batch_applied (entries) | entries | — | `{ kind, imported, skipped }` | — |
 
 Semantics that matter:
 
@@ -160,23 +166,25 @@ npm install
 npm run dev            # http://localhost:3000 (PGlite, zero config)
 npm run build          # includes typecheck — must pass
 npm run lint           # eslint — must pass
+npm run alpha:check    # static configuration/release guard; add BASE_URL for live health
+npm run alpha:e2e      # ordered clean-database browser acceptance suite
 npm run db:generate    # after schema changes
 npm run db:migrate     # against real Postgres (DATABASE_URL)
 ```
 
-**Browser verification is the project's test suite.** `scripts/e2e/*.mjs` are Playwright scripts that drive the real UI against a running server and assert on rendered output (see `scripts/e2e/README.md`). They create data — run against a throwaway DB (`rm -rf .pglite`), in numeric order. Every feature PR so far shipped with such a run; keep that bar. When forms share input names across a page (e.g. Money has two `amount` inputs), **scope locators to the form** (`page.locator("form", { hasText: … })`).
+**Browser verification is the project's test suite.** `npm run alpha:e2e` drives the real UI against a running server, in numeric order, and now fails if any legacy rendered assertion reports `false` (see `scripts/e2e/README.md`). Use `PGLITE_DATA_DIR=.pglite-alpha` rather than deleting normal `.pglite` data. Every feature PR so far shipped with such a run; keep that bar. When forms share input names across a page (e.g. Money has two `amount` inputs), **scope locators to the form** (`page.locator("form", { hasText: … })`).
 
 ## 6. Known gaps, gotchas, and how to fix them
 
-- **Auth requires deployment configuration.** The code is complete, but protection activates only when the Supabase URL and publishable/anon key are present. Configure the Site URL, redirect allow-list, and SSR token-hash Magic Link template exactly as documented in README §Deploy. Partial configuration fails closed with an explicit server error; only omitting both variables enables local fallback.
+- **Auth requires deployment configuration.** Configure the Site URL, redirect allow-list, and SSR token-hash Magic Link template exactly as documented in README §Deploy. Partial configuration fails closed, and Vercel/strict hosted mode also fails closed when both variables are absent. Only local development retains the zero-config fallback.
 - **Web Push requires deployment variables.** Set both VAPID keys, `VAPID_SUBJECT`, and `CRON_SECRET`; without a complete set the Today opt-in stays hidden and the cron returns 503. The default Hobby-compatible cron runs nightly at 21:00 SG. Morning brief logic exists but needs an additional scheduler invocation on a plan that permits it.
+- **Offline Quick Capture is deliberately bounded.** The latest 50 captures remain in origin-local storage until individually confirmed by the server. Captures older than 90 days use the reconnect time; all normal offline captures preserve their original Singapore day and timestamp. Only Quick Capture is queued—other mutations require a connection—and the service worker never caches private app HTML or data.
 - **Function/database region affects responsiveness.** The dashboard query waterfalls are parallelized and common filters indexed, but Vercel Functions must still be set to the Supabase database region in Vercel Settings → Functions.
 - **Calendar is local-first v1.** Manual events and the Today agenda are complete. Google Calendar two-way sync still needs Google OAuth credentials, token storage, conflict rules, and a sync worker.
 - **Vault passphrases are unrecoverable.** Every item is independently salted and encrypted with AES-GCM after PBKDF2-SHA256 (250,000 iterations) in the browser. Titles are inside the ciphertext; the database sees only `Encrypted item`. The current unlock flow assumes one passphrase across all items.
 - **Assistant provider is optional.** Without `OPENAI_API_KEY`, `/assistant` generates deterministic local briefings. With it, the server sends a capped question plus a compact summary (metrics and selected titles only) to the Responses API with `store: false`. Vault, journal text, transaction notes, contacts, serials, and passphrases never enter the snapshot. Recognized task/expense/event/habit commands are resolved locally and do not call the provider; a separate server-side confirmation revalidates the draft before writing it. Prompts and replies are not written to Megaapp's database, while confirmed action summaries receive an exportable audit entry.
 - **`formatDay`** omits the year — dates >6 months out (yearly renewals) display without year context.
-- **iOS PWA icon**: manifest icon is SVG; add PNG `apple-touch-icon` sizes for iOS.
-- **Import doesn't exist** — export is one-way JSON. CSV importers are planned per module (plan §3).
+- **Import v1 is deliberately narrow.** `/import` supports tasks, expenses, habit definitions, and local calendar events in batches of up to 250 rows/500 KB. It does not restore JSON exports, infer habit check-in history, import Vault data, or accept journal text. Expand formats only with the same preview/revalidation/dedupe boundary.
 - **Insights window limits**: habit streaks look back 120 days; health trends 30 days. All-time best streak older than the window relies on the `streakBest` cache.
 - **`.pglite/` is gitignored** dev state. The e2e scripts have populated it in past sessions; don't assume it's empty.
 - **Weekly review upsert matches by `occurredAt` within the current week** — a review can only be written/edited during its own week. Known simplification.
@@ -239,9 +247,17 @@ Each spec follows the house pattern: data on the primitives, queries in `src/lib
 - Weekly Review now links to Assistant for a structured draft; Today and desktop navigation link to `/assistant`.
 - **Verified**: `11-assistant.mjs` covers local answers, current data grounding, review drafting, no reply persistence, review/Today handoff, and 390px layouts. `12-assistant-actions.mjs` covers the draft boundary, all four confirmed writes, audit/export, and Assistant mobile layout.
 
-### 7.8 Recommended next release
+### 7.8 CSV Import Center — shipped locally 2026-07-15
 
-Tackle Google Calendar OAuth sync or module CSV importers. Keep provider calls optional, preserve explicit confirmation for every Assistant write, and do not widen the Vault boundary.
+- `/import` accepts files or pasted CSV for tasks, expenses, habit definitions, and local calendar events. Each type has a downloadable header template and alias-aware columns.
+- The browser parses quoted fields, validates every row, isolates bad rows, detects duplicates inside the file, and shows the exact normalized rows before confirmation. Files are capped at 500 KB/250 data rows per batch.
+- `importCsvRecords()` treats the preview JSON as untrusted, revalidates it, scopes every existing-data query by `userId`, skips matching records, batches inserts into the existing `items`/`entries` primitives and extension tables, and writes an exportable `imports/batch_applied` audit entry.
+- Vault and journal data are outside this boundary. Today and desktop navigation link to Import Center; import audit notes route back through global Search.
+- **Verified**: `13-import-center.mjs` covers quoted CSV, row errors, in-file and existing-data duplicates, all four destinations, confirmed audit/export, Today handoff, and 390px layout.
+
+### 7.9 Recommended next release
+
+Implement Google Calendar OAuth sync once credentials and conflict policy are available. Without those inputs, expand Import Center to health history and module-specific exports. Preserve confirmed writes, the offline receipt boundary, and the Vault exclusion.
 
 ## 8. Product principles to preserve (from PLAN.md, enforced in code review)
 

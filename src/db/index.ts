@@ -30,7 +30,17 @@ async function createDb(): Promise<Database> {
       { schema },
     );
   }
-  const client = new PGlite(path.join(process.cwd(), ".pglite"));
+  if (process.env.VERCEL || process.env.MEGAAPP_REQUIRE_EXTERNAL_DB === "1") {
+    throw new Error(
+      "DATABASE_URL is required for a hosted Megaapp. Embedded PGlite is only supported for local development.",
+    );
+  }
+  const dataDirectory = process.env.PGLITE_DATA_DIR?.trim() || ".pglite";
+  // The directory override is only for isolated local acceptance runs. The
+  // Turbopack hint prevents the dynamic test path from tracing the whole repo.
+  const client = new PGlite(
+    path.resolve(/* turbopackIgnore: true */ process.cwd(), dataDirectory),
+  );
   const db = drizzlePglite(client, { schema });
   await migratePglite(db, {
     migrationsFolder: path.join(process.cwd(), "drizzle"),
@@ -41,6 +51,21 @@ async function createDb(): Promise<Database> {
 export function getDb(): Promise<Database> {
   globalForDb.megaappDb ??= createDb();
   return globalForDb.megaappDb;
+}
+
+/** Run a callback atomically across both supported database drivers. */
+export async function withTransaction<T>(
+  callback: (transaction: Database) => Promise<T>,
+): Promise<T> {
+  const db = await getDb();
+  if (process.env.DATABASE_URL) {
+    return (db as PostgresJsDatabase<typeof schema>).transaction((transaction) =>
+      callback(transaction as unknown as Database),
+    );
+  }
+  return (db as PgliteDatabase<typeof schema>).transaction((transaction) =>
+    callback(transaction as unknown as Database),
+  );
 }
 
 export { schema };

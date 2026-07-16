@@ -1,8 +1,10 @@
 "use server";
 
+import { randomUUID } from "node:crypto";
 import { revalidatePath } from "next/cache";
+import { redirect } from "next/navigation";
 import { and, eq, gte, inArray, lte } from "drizzle-orm";
-import { getDb, schema } from "@/db";
+import { getDb, schema, withTransaction } from "@/db";
 import { getCurrentUser } from "@/lib/user";
 import {
   addDays,
@@ -11,13 +13,16 @@ import {
   dayKey,
   dayNoon,
   dayStart,
+  daysBetween,
   nextAnnualKey,
   nextDueKey,
   nextRenewalKey,
   todayKey,
+  timeKey,
   zonedDateTime,
 } from "@/lib/dates";
-import { computeCurrentStreak } from "@/lib/data";
+import { computeCurrentStreak, type HabitView } from "@/lib/data";
+import type { SubscriptionView } from "@/lib/money";
 import { parseCapture } from "@/lib/capture";
 import {
   getActiveGroceryList,
@@ -55,29 +60,54 @@ import {
   parseAssistantActionProposal,
   validateAssistantActionProposal,
 } from "@/lib/assistant-actions";
+import {
+  IMPORT_CONFIG,
+  IMPORT_KINDS,
+  importRecordFingerprint,
+  validateImportBatch,
+  type CalendarImportRecord,
+  type ExpenseImportRecord,
+  type HabitImportRecord,
+  type ImportKind,
+  type ImportRecord,
+  type TaskImportRecord,
+} from "@/lib/imports";
 
-const MODULE_PATHS = [
-  "/today",
-  "/tasks",
-  "/habits",
-  "/journal",
-  "/money",
-  "/health",
-  "/review",
-  "/meals",
-  "/insights",
-  "/calendar",
-  "/goals",
-  "/lists",
-  "/search",
-  "/travel",
-  "/people",
-  "/home",
-  "/vault",
-  "/assistant",
-];
-function revalidateAll() {
-  for (const p of MODULE_PATHS) revalidatePath(p);
+function revalidateAll(...paths: string[]) {
+  // Dynamic routes are fresh on navigation; only refresh Today plus the
+  // route containing the submitted form so the action response stays small.
+  if (paths.length === 0) {
+    revalidatePath("/", "layout");
+    return;
+  }
+  for (const path of new Set(["/today", ...paths])) revalidatePath(path);
+}
+
+function redirectFresh(path: string): never {
+  redirect(`${path}?updated=${Date.now()}`);
+}
+
+const MODULE_ROUTE: Record<string, string> = {
+  tasks: "/tasks",
+  habits: "/habits",
+  journal: "/journal",
+  money: "/money",
+  health: "/health",
+  review: "/review",
+  meals: "/meals",
+  calendar: "/calendar",
+  goals: "/goals",
+  lists: "/lists",
+  travel: "/travel",
+  people: "/people",
+  home: "/home",
+  vault: "/vault",
+  assistant: "/assistant",
+  imports: "/import",
+};
+
+function moduleRoute(module: string) {
+  return MODULE_ROUTE[module] ?? "/today";
 }
 
 type Recurrence = "daily" | "weekly" | "monthly";
@@ -108,7 +138,7 @@ export async function createTask(formData: FormData) {
     recurrence,
     priority,
   });
-  revalidateAll();
+  revalidateAll("/tasks");
 }
 
 export async function toggleTask(formData: FormData) {
@@ -193,7 +223,7 @@ export async function toggleTask(formData: FormData) {
       payload: prevDueKey ? { prevDueKey } : {},
     });
   }
-  revalidateAll();
+  revalidateAll("/tasks");
 }
 
 /** Delete any item the user owns (task, subscription, …); cascades. */
@@ -202,10 +232,16 @@ export async function deleteItem(formData: FormData) {
   if (!itemId) return;
   const user = await getCurrentUser();
   const db = await getDb();
+  const [owned] = await db
+    .select({ module: schema.items.module })
+    .from(schema.items)
+    .where(and(eq(schema.items.id, itemId), eq(schema.items.userId, user.id)))
+    .limit(1);
+  if (!owned) return;
   await db
     .delete(schema.items)
     .where(and(eq(schema.items.id, itemId), eq(schema.items.userId, user.id)));
-  revalidateAll();
+  revalidateAll(moduleRoute(owned.module));
 }
 
 // ---------------------------------------------------------------------------
@@ -221,8 +257,23 @@ export async function createHabit(formData: FormData) {
     .insert(schema.items)
     .values({ userId: user.id, module: "habits", type: "habit", title })
     .returning();
-  await db.insert(schema.habits).values({ itemId: item.id });
-  revalidateAll();
+  const [habit] = await db
+    .insert(schema.habits)
+    .values({ itemId: item.id })
+    .returning();
+  revalidateAll("/habits");
+  return {
+    habitId: habit.id,
+    itemId: item.id,
+    title,
+    checkedToday: false,
+    streakCurrent: 0,
+    streakBest: 0,
+    last7: Array.from({ length: 7 }, (_, index) => ({
+      day: addDays(todayKey(), index - 6),
+      checked: false,
+    })),
+  } satisfies HabitView;
 }
 
 export async function toggleHabit(formData: FormData) {
@@ -290,7 +341,7 @@ export async function toggleHabit(formData: FormData) {
     })
     .where(eq(schema.habits.id, habitId));
 
-  revalidateAll();
+  revalidateAll("/habits");
 }
 
 export async function archiveHabit(formData: FormData) {
@@ -302,7 +353,7 @@ export async function archiveHabit(formData: FormData) {
     .update(schema.items)
     .set({ status: "archived", updatedAt: new Date() })
     .where(and(eq(schema.items.id, itemId), eq(schema.items.userId, user.id)));
-  revalidateAll();
+  revalidateAll("/habits");
 }
 
 // ---------------------------------------------------------------------------
@@ -346,7 +397,7 @@ export async function logExpense(formData: FormData) {
   const day = String(formData.get("day") ?? "").trim() || undefined;
   const user = await getCurrentUser();
   await insertExpense(user.id, amount, note, category, day);
-  revalidateAll();
+  revalidateAll("/money");
 }
 
 export async function createSubscription(formData: FormData) {
@@ -384,7 +435,17 @@ export async function createSubscription(formData: FormData) {
     schedule: cadence,
     nextFireAt: dayStart(next),
   });
-  revalidateAll();
+  revalidateAll("/money");
+  return {
+    itemId: item.id,
+    name,
+    amount,
+    cadence,
+    nextRenewalKey: next,
+    category,
+    daysUntil: daysBetween(todayKey(), next),
+    monthlyEquivalent: cadence === "yearly" ? amount / 12 : amount,
+  } satisfies SubscriptionView;
 }
 
 /** Log the renewal as an expense and advance the next renewal date. */
@@ -424,7 +485,8 @@ export async function subscriptionPaid(formData: FormData) {
     .update(schema.reminders)
     .set({ nextFireAt: dayStart(next) })
     .where(eq(schema.reminders.itemId, item.id));
-  revalidateAll();
+  revalidateAll("/money");
+  return { nextRenewalKey: next, daysUntil: daysBetween(todayKey(), next) };
 }
 
 export async function setMonthlyBudget(formData: FormData) {
@@ -438,7 +500,8 @@ export async function setMonthlyBudget(formData: FormData) {
     .update(schema.users)
     .set({ settings })
     .where(eq(schema.users.id, user.id));
-  revalidateAll();
+  revalidateAll("/money");
+  redirectFresh("/money");
 }
 
 // ---------------------------------------------------------------------------
@@ -478,7 +541,7 @@ export async function logHealth(formData: FormData) {
   if (value === null && !note) return;
   const user = await getCurrentUser();
   await insertHealth(user.id, type as HealthType, value, note);
-  revalidateAll();
+  revalidateAll("/health");
 }
 
 // ---------------------------------------------------------------------------
@@ -491,12 +554,18 @@ export async function deleteEntry(formData: FormData) {
   if (!entryId) return;
   const user = await getCurrentUser();
   const db = await getDb();
+  const [owned] = await db
+    .select({ module: schema.entries.module })
+    .from(schema.entries)
+    .where(and(eq(schema.entries.id, entryId), eq(schema.entries.userId, user.id)))
+    .limit(1);
+  if (!owned) return;
   await db
     .delete(schema.entries)
     .where(
       and(eq(schema.entries.id, entryId), eq(schema.entries.userId, user.id)),
     );
-  revalidateAll();
+  revalidateAll(moduleRoute(owned.module));
 }
 
 type PushSubscriptionInput = {
@@ -571,7 +640,7 @@ export async function savePushSubscription(formData: FormData) {
     return { ok: false, message: "The browser subscription expired. Try again." };
   }
 
-  revalidateAll();
+  revalidateAll("/today");
   return result === "sent"
     ? { ok: true, message: "Notifications enabled — test sent." }
     : { ok: true, message: "Notifications enabled." };
@@ -590,7 +659,7 @@ export async function deletePushSubscription(formData: FormData) {
         eq(schema.pushSubscriptions.endpoint, endpoint),
       ),
     );
-  revalidateAll();
+  revalidateAll("/today");
   return { ok: true };
 }
 
@@ -639,7 +708,8 @@ export async function createRecipe(formData: FormData) {
     title,
     payload: { ingredients, ...(link ? { link } : {}) },
   });
-  revalidateAll();
+  revalidateAll("/meals");
+  redirectFresh("/meals");
 }
 
 export async function saveMealPlan(formData: FormData) {
@@ -692,7 +762,8 @@ export async function saveMealPlan(formData: FormData) {
       payload: { days },
     });
   }
-  revalidateAll();
+  revalidateAll("/meals");
+  redirectFresh("/meals");
 }
 
 async function writeGroceryList(userId: string, items: GroceryItem[]) {
@@ -718,15 +789,6 @@ async function writeGroceryList(userId: string, items: GroceryItem[]) {
     })
     .returning();
   return created.id;
-}
-
-async function appendGroceryItem(userId: string, name: string) {
-  const cleanName = uniqueNames([name])[0];
-  if (!cleanName) return;
-  const existing = await getActiveGroceryList(userId);
-  const current = existing?.items ?? [];
-  if (current.some((item) => item.name.toLocaleLowerCase("en-SG") === cleanName.toLocaleLowerCase("en-SG"))) return;
-  await writeGroceryList(userId, [...current, { name: cleanName, done: false }]);
 }
 
 export async function generateGroceryList() {
@@ -775,7 +837,8 @@ export async function generateGroceryList() {
       done: doneByName.get(name.toLocaleLowerCase("en-SG")) ?? false,
     })),
   );
-  revalidateAll();
+  revalidateAll("/meals");
+  redirectFresh("/meals");
 }
 
 export async function toggleGroceryItem(formData: FormData) {
@@ -807,7 +870,8 @@ export async function toggleGroceryItem(formData: FormData) {
     .update(schema.items)
     .set({ payload: { items }, updatedAt: new Date() })
     .where(eq(schema.items.id, row.id));
-  revalidateAll();
+  revalidateAll("/meals");
+  redirectFresh("/meals");
 }
 
 // ---------------------------------------------------------------------------
@@ -846,7 +910,8 @@ export async function createCalendarEvent(formData: FormData) {
     title,
     payload,
   });
-  revalidateAll();
+  revalidateAll("/calendar");
+  redirectFresh("/calendar");
 }
 
 export async function createGoal(formData: FormData) {
@@ -904,7 +969,8 @@ export async function createGoal(formData: FormData) {
     title,
     payload,
   });
-  revalidateAll();
+  revalidateAll("/goals");
+  redirectFresh("/goals");
 }
 
 export async function toggleGoalMilestone(formData: FormData) {
@@ -935,7 +1001,7 @@ export async function toggleGoalMilestone(formData: FormData) {
     .update(schema.items)
     .set({ payload: { ...payload, milestones }, updatedAt: new Date() })
     .where(eq(schema.items.id, row.id));
-  revalidateAll();
+  revalidateAll("/goals");
 }
 
 export async function createMediaItem(formData: FormData) {
@@ -957,7 +1023,8 @@ export async function createMediaItem(formData: FormData) {
     title,
     payload,
   });
-  revalidateAll();
+  revalidateAll("/lists");
+  redirectFresh("/lists");
 }
 
 export async function updateMediaState(formData: FormData) {
@@ -986,7 +1053,7 @@ export async function updateMediaState(formData: FormData) {
       updatedAt: new Date(),
     })
     .where(eq(schema.items.id, row.id));
-  revalidateAll();
+  revalidateAll("/lists");
 }
 
 export async function rateMediaItem(formData: FormData) {
@@ -1015,7 +1082,7 @@ export async function rateMediaItem(formData: FormData) {
       updatedAt: new Date(),
     })
     .where(eq(schema.items.id, row.id));
-  revalidateAll();
+  revalidateAll("/lists");
 }
 
 // ---------------------------------------------------------------------------
@@ -1044,7 +1111,8 @@ export async function createPackingTemplate(formData: FormData) {
     title,
     payload: { items } satisfies PackingTemplatePayload,
   });
-  revalidateAll();
+  revalidateAll("/travel");
+  redirectFresh("/travel");
 }
 
 export async function createTrip(formData: FormData) {
@@ -1111,7 +1179,8 @@ export async function createTrip(formData: FormData) {
     schedule: "once",
     nextFireAt: dayStart(addDays(startDate, -1)),
   });
-  revalidateAll();
+  revalidateAll("/travel");
+  redirectFresh("/travel");
 }
 
 export async function toggleTripPackingItem(formData: FormData) {
@@ -1147,7 +1216,8 @@ export async function toggleTripPackingItem(formData: FormData) {
       updatedAt: new Date(),
     })
     .where(eq(schema.items.id, row.id));
-  revalidateAll();
+  revalidateAll("/travel");
+  redirectFresh("/travel");
 }
 
 export async function addTripPackingItem(formData: FormData) {
@@ -1182,7 +1252,8 @@ export async function addTripPackingItem(formData: FormData) {
       updatedAt: new Date(),
     })
     .where(eq(schema.items.id, row.id));
-  revalidateAll();
+  revalidateAll("/travel");
+  redirectFresh("/travel");
 }
 
 export async function addItineraryStop(formData: FormData) {
@@ -1230,7 +1301,8 @@ export async function addItineraryStop(formData: FormData) {
       updatedAt: new Date(),
     })
     .where(eq(schema.items.id, row.id));
-  revalidateAll();
+  revalidateAll("/travel");
+  redirectFresh("/travel");
 }
 
 export async function createPerson(formData: FormData) {
@@ -1263,7 +1335,8 @@ export async function createPerson(formData: FormData) {
       nextFireAt: dayStart(nextAnnualKey(birthday)),
     });
   }
-  revalidateAll();
+  revalidateAll("/people");
+  redirectFresh("/people");
 }
 
 export async function logPersonContact(formData: FormData) {
@@ -1300,7 +1373,8 @@ export async function logPersonContact(formData: FormData) {
     note: note || `Caught up with ${row.title}`,
     itemId: row.id,
   });
-  revalidateAll();
+  revalidateAll("/people");
+  redirectFresh("/people");
 }
 
 export async function addGiftIdea(formData: FormData) {
@@ -1322,7 +1396,8 @@ export async function addGiftIdea(formData: FormData) {
     .update(schema.items)
     .set({ payload: { ...payload, giftIdeas: [...ideas, idea] }, updatedAt: new Date() })
     .where(eq(schema.items.id, row.id));
-  revalidateAll();
+  revalidateAll("/people");
+  redirectFresh("/people");
 }
 
 export async function createHomeAsset(formData: FormData) {
@@ -1343,7 +1418,8 @@ export async function createHomeAsset(formData: FormData) {
     notes: notes || undefined,
   };
   await db.insert(schema.items).values({ userId: user.id, module: "home", type: "asset", title, payload });
-  revalidateAll();
+  revalidateAll("/home");
+  redirectFresh("/home");
 }
 
 export async function createMaintenanceItem(formData: FormData) {
@@ -1388,7 +1464,8 @@ export async function createMaintenanceItem(formData: FormData) {
     schedule: cadenceMonths ? `months:${cadenceMonths}` : "once",
     nextFireAt: dayStart(dueDate),
   });
-  revalidateAll();
+  revalidateAll("/home");
+  redirectFresh("/home");
 }
 
 export async function completeMaintenance(formData: FormData) {
@@ -1441,7 +1518,8 @@ export async function completeMaintenance(formData: FormData) {
       .set({ nextFireAt: null })
       .where(and(eq(schema.reminders.userId, user.id), eq(schema.reminders.itemId, row.id)));
   }
-  revalidateAll();
+  revalidateAll("/home");
+  redirectFresh("/home");
 }
 
 export async function createVaultItem(formData: FormData) {
@@ -1476,7 +1554,261 @@ export async function createVaultItem(formData: FormData) {
     title: "Encrypted item",
     payload,
   });
-  revalidateAll();
+  revalidateAll("/vault");
+}
+
+// ---------------------------------------------------------------------------
+// CSV imports — previewed in the browser, then fully revalidated here.
+// ---------------------------------------------------------------------------
+
+export async function importCsvRecords(formData: FormData) {
+  const kindRaw = String(formData.get("kind") ?? "");
+  if (!IMPORT_KINDS.includes(kindRaw as ImportKind)) return;
+  const kind = kindRaw as ImportKind;
+  const raw = String(formData.get("records") ?? "");
+  if (!raw || raw.length > 1_000_000) return;
+  let value: unknown;
+  try {
+    value = JSON.parse(raw);
+  } catch {
+    return;
+  }
+  const records = validateImportBatch(kind, value);
+  if (!records) return;
+
+  const user = await getCurrentUser();
+  const db = await getDb();
+  const existing = new Set<string>();
+
+  if (kind === "tasks") {
+    const rows = await db
+      .select({ title: schema.items.title, dueAt: schema.tasks.dueAt })
+      .from(schema.tasks)
+      .innerJoin(schema.items, eq(schema.tasks.itemId, schema.items.id))
+      .where(
+        and(
+          eq(schema.items.userId, user.id),
+          eq(schema.items.module, "tasks"),
+          eq(schema.items.type, "task"),
+          eq(schema.items.status, "active"),
+        ),
+      );
+    for (const row of rows) {
+      existing.add(
+        importRecordFingerprint({
+          kind: "tasks",
+          title: row.title,
+          due: row.dueAt ? dayKey(row.dueAt) : null,
+          priority: 0,
+        }),
+      );
+    }
+  } else if (kind === "expenses") {
+    const expenseRecords = records.filter(
+      (record): record is ExpenseImportRecord => record.kind === "expenses",
+    );
+    const days = expenseRecords.map((record) => record.day).sort();
+    const rows = await db
+      .select({
+        occurredAt: schema.entries.occurredAt,
+        note: schema.entries.note,
+        amount: schema.transactions.amount,
+        category: schema.transactions.category,
+      })
+      .from(schema.transactions)
+      .innerJoin(schema.entries, eq(schema.transactions.entryId, schema.entries.id))
+      .where(
+        and(
+          eq(schema.entries.userId, user.id),
+          eq(schema.entries.module, "money"),
+          eq(schema.entries.type, "expense"),
+          gte(schema.entries.occurredAt, dayStart(days[0])),
+          lte(schema.entries.occurredAt, dayEnd(days[days.length - 1])),
+        ),
+      );
+    for (const row of rows) {
+      existing.add(
+        `${dayKey(row.occurredAt)}|${Number(row.amount).toFixed(2)}|${row.category ?? "other"}|${(row.note ?? "").toLowerCase()}`,
+      );
+    }
+  } else if (kind === "habits") {
+    const rows = await db
+      .select({ title: schema.items.title })
+      .from(schema.items)
+      .where(
+        and(
+          eq(schema.items.userId, user.id),
+          eq(schema.items.module, "habits"),
+          eq(schema.items.type, "habit"),
+          eq(schema.items.status, "active"),
+        ),
+      );
+    for (const row of rows)
+      existing.add(importRecordFingerprint({ kind: "habits", title: row.title }));
+  } else {
+    const rows = await db
+      .select({ title: schema.items.title, payload: schema.items.payload })
+      .from(schema.items)
+      .where(
+        and(
+          eq(schema.items.userId, user.id),
+          eq(schema.items.module, "calendar"),
+          eq(schema.items.type, "event"),
+          eq(schema.items.status, "active"),
+        ),
+      );
+    for (const row of rows) {
+      const payload = row.payload as Partial<CalendarEventPayload>;
+      if (typeof payload.startAt !== "string") continue;
+      const start = new Date(payload.startAt);
+      if (Number.isNaN(start.getTime())) continue;
+      existing.add(
+        importRecordFingerprint({
+          kind: "calendar",
+          title: row.title,
+          date: dayKey(start),
+          startTime: payload.allDay ? null : timeKey(start),
+          endTime: null,
+          allDay: payload.allDay === true,
+          location: "",
+          notes: "",
+        }),
+      );
+    }
+  }
+
+  const accepted: ImportRecord[] = [];
+  for (const record of records) {
+    const fingerprint = importRecordFingerprint(record);
+    if (existing.has(fingerprint)) continue;
+    existing.add(fingerprint);
+    accepted.push(record);
+  }
+
+  const taskRecords = accepted.filter(
+    (record): record is TaskImportRecord => record.kind === "tasks",
+  );
+  if (taskRecords.length) {
+    const prepared = taskRecords.map((record) => ({ id: randomUUID(), record }));
+    await db.insert(schema.items).values(
+      prepared.map(({ id, record }) => ({
+        id,
+        userId: user.id,
+        module: "tasks",
+        type: "task",
+        title: record.title,
+      })),
+    );
+    await db.insert(schema.tasks).values(
+      prepared.map(({ id, record }) => ({
+        itemId: id,
+        dueAt: record.due ? dayNoon(record.due) : null,
+        recurrence: null,
+        priority: record.priority,
+      })),
+    );
+  }
+
+  const expenseRecords = accepted.filter(
+    (record): record is ExpenseImportRecord => record.kind === "expenses",
+  );
+  if (expenseRecords.length) {
+    const prepared = expenseRecords.map((record) => ({ id: randomUUID(), record }));
+    await db.insert(schema.entries).values(
+      prepared.map(({ id, record }) => ({
+        id,
+        userId: user.id,
+        module: "money",
+        type: "expense",
+        occurredAt: dayNoon(record.day),
+        value: String(record.amount),
+        note: record.note,
+      })),
+    );
+    await db.insert(schema.transactions).values(
+      prepared.map(({ id, record }) => ({
+        entryId: id,
+        amount: String(record.amount),
+        category: record.category,
+      })),
+    );
+  }
+
+  const habitRecords = accepted.filter(
+    (record): record is HabitImportRecord => record.kind === "habits",
+  );
+  if (habitRecords.length) {
+    const prepared = habitRecords.map((record) => ({ id: randomUUID(), record }));
+    await db.insert(schema.items).values(
+      prepared.map(({ id, record }) => ({
+        id,
+        userId: user.id,
+        module: "habits",
+        type: "habit",
+        title: record.title,
+      })),
+    );
+    await db.insert(schema.habits).values(prepared.map(({ id }) => ({ itemId: id })));
+  }
+
+  const calendarRecords = accepted.filter(
+    (record): record is CalendarImportRecord => record.kind === "calendar",
+  );
+  if (calendarRecords.length) {
+    await db.insert(schema.items).values(
+      calendarRecords.map((record) => {
+        const start = record.allDay
+          ? dayStart(record.date)
+          : zonedDateTime(record.date, record.startTime as string);
+        const end = record.allDay
+          ? dayEnd(record.date)
+          : record.endTime
+            ? zonedDateTime(record.date, record.endTime)
+            : null;
+        const payload: CalendarEventPayload = {
+          startAt: start.toISOString(),
+          endAt: end?.toISOString(),
+          allDay: record.allDay,
+          location: record.location || undefined,
+          notes: record.notes || undefined,
+        };
+        return {
+          id: randomUUID(),
+          userId: user.id,
+          module: "calendar",
+          type: "event",
+          title: record.title,
+          payload,
+        };
+      }),
+    );
+  }
+
+  const imported = accepted.length;
+  const skipped = records.length - imported;
+  const config = IMPORT_CONFIG[kind];
+  const noun = imported === 1 ? config.singular : config.label.toLowerCase();
+  const duplicateText = skipped
+    ? `; ${skipped} duplicate${skipped === 1 ? "" : "s"} skipped`
+    : "";
+  const note = imported
+    ? `Imported ${imported} ${noun} from CSV${duplicateText}`
+    : `No new ${config.label.toLowerCase()} imported; ${skipped} duplicate${skipped === 1 ? "" : "s"} skipped`;
+  await db.insert(schema.entries).values({
+    userId: user.id,
+    module: "imports",
+    type: "batch_applied",
+    occurredAt: new Date(),
+    note,
+    payload: { kind, imported, skipped },
+  });
+  revalidateAll("/import");
+  const query = new URLSearchParams({
+    kind,
+    imported: String(imported),
+    skipped: String(skipped),
+  });
+  redirect(`/import?${query.toString()}`);
 }
 
 // ---------------------------------------------------------------------------
@@ -1604,134 +1936,227 @@ export async function confirmAssistantAction(
       },
     })
     .returning();
-  revalidateAll();
+  revalidateAll("/assistant");
   return { id: audit.id, summary, day: dayKey(audit.occurredAt), action: proposal.kind };
 }
 
 // Quick Capture v2: one input, many destinations (src/lib/capture.ts).
-export async function quickCapture(formData: FormData) {
-  const parsed = parseCapture(String(formData.get("text") ?? ""));
-  if (!parsed) return;
-  const user = await getCurrentUser();
-  const db = await getDb();
+export type QuickCaptureResult = {
+  ok: boolean;
+  status: "captured" | "duplicate" | "invalid";
+};
 
-  switch (parsed.kind) {
-    case "expense":
-      await insertExpense(user.id, parsed.amount, parsed.note, parsed.category);
-      break;
-    case "weight":
-      await insertHealth(user.id, "weight", parsed.kg);
-      break;
-    case "sleep":
-      await insertHealth(user.id, "sleep", parsed.hours);
-      break;
-    case "water":
-      await insertHealth(user.id, "water", parsed.ml);
-      break;
-    case "workout":
-      await insertHealth(user.id, "workout", parsed.minutes, parsed.note);
-      break;
-    case "grocery":
-      await appendGroceryItem(user.id, parsed.name);
-      break;
-    case "media":
-      await db.insert(schema.items).values({
+function postgresErrorCode(error: unknown): string | null {
+  let current: unknown = error;
+  for (let depth = 0; depth < 4; depth += 1) {
+    if (!current || typeof current !== "object") return null;
+    if ("code" in current && typeof current.code === "string") return current.code;
+    current = "cause" in current ? current.cause : null;
+  }
+  return null;
+}
+
+export async function quickCapture(formData: FormData): Promise<QuickCaptureResult> {
+  const text = String(formData.get("text") ?? "").trim().slice(0, 500);
+  const parsed = parseCapture(text);
+  if (!parsed) return { ok: false, status: "invalid" };
+
+  const suppliedClientId = String(formData.get("clientId") ?? "").trim();
+  const clientId = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
+    suppliedClientId,
+  )
+    ? suppliedClientId
+    : randomUUID();
+  const capturedAtInput = new Date(String(formData.get("capturedAt") ?? ""));
+  const now = new Date();
+  const capturedAt =
+    Number.isFinite(capturedAtInput.getTime()) &&
+    capturedAtInput.getTime() <= now.getTime() + 5 * 60_000 &&
+    capturedAtInput.getTime() >= now.getTime() - 90 * 86_400_000
+      ? capturedAtInput
+      : now;
+  const capturedDay = dayKey(capturedAt);
+  const user = await getCurrentUser();
+
+  try {
+    await withTransaction(async (db) => {
+      // The client UUID is the receipt primary key. Inserting it first makes
+      // a replay fail inside the same transaction before any domain write.
+      await db.insert(schema.entries).values({
+        id: clientId,
         userId: user.id,
-        module: "lists",
-        type: "media",
-        title: parsed.title,
-        payload: { kind: parsed.mediaKind, state: "backlog" },
+        module: "capture",
+        type: "receipt",
+        occurredAt: capturedAt,
+        payload: { source: suppliedClientId ? "offline-capable" : "server" },
       });
-      break;
-    case "person": {
-      const matches = await db
-        .select()
-        .from(schema.items)
-        .where(
-          and(
+
+      switch (parsed.kind) {
+        case "expense": {
+          const [entry] = await db.insert(schema.entries).values({
+            userId: user.id,
+            module: "money",
+            type: "expense",
+            occurredAt: capturedAt,
+            value: String(parsed.amount),
+            note: parsed.note,
+          }).returning();
+          await db.insert(schema.transactions).values({
+            entryId: entry.id,
+            amount: String(parsed.amount),
+            category: parsed.category ?? "other",
+          });
+          break;
+        }
+        case "weight":
+        case "sleep":
+        case "water":
+          await db.insert(schema.entries).values({
+            userId: user.id,
+            module: "health",
+            type: parsed.kind,
+            occurredAt: capturedAt,
+            value: String(parsed.kind === "weight" ? parsed.kg : parsed.kind === "sleep" ? parsed.hours : parsed.ml),
+          });
+          break;
+        case "workout":
+          await db.insert(schema.entries).values({
+            userId: user.id,
+            module: "health",
+            type: "workout",
+            occurredAt: capturedAt,
+            value: parsed.minutes === null ? null : String(parsed.minutes),
+            note: parsed.note,
+          });
+          break;
+        case "grocery": {
+          const [grocery] = await db.select().from(schema.items).where(and(
+            eq(schema.items.userId, user.id),
+            eq(schema.items.module, "meals"),
+            eq(schema.items.type, "grocery"),
+            eq(schema.items.status, "active"),
+          )).limit(1);
+          const cleanName = uniqueNames([parsed.name])[0];
+          if (!cleanName) break;
+          const current = ((grocery?.payload as { items?: GroceryItem[] } | undefined)?.items ?? []);
+          if (current.some((item) => item.name.toLocaleLowerCase("en-SG") === cleanName.toLocaleLowerCase("en-SG"))) break;
+          if (grocery) {
+            await db.update(schema.items).set({
+              payload: { items: [...current, { name: cleanName, done: false }] },
+              updatedAt: capturedAt,
+            }).where(and(eq(schema.items.id, grocery.id), eq(schema.items.userId, user.id)));
+          } else {
+            await db.insert(schema.items).values({
+              userId: user.id,
+              module: "meals",
+              type: "grocery",
+              title: "Groceries",
+              payload: { items: [{ name: cleanName, done: false }] },
+              createdAt: capturedAt,
+              updatedAt: capturedAt,
+            });
+          }
+          break;
+        }
+        case "media":
+          await db.insert(schema.items).values({
+            userId: user.id,
+            module: "lists",
+            type: "media",
+            title: parsed.title,
+            payload: { kind: parsed.mediaKind, state: "backlog" },
+            createdAt: capturedAt,
+            updatedAt: capturedAt,
+          });
+          break;
+        case "person": {
+          const [person] = await db.select().from(schema.items).where(and(
             eq(schema.items.userId, user.id),
             eq(schema.items.module, "people"),
             eq(schema.items.type, "person"),
             eq(schema.items.title, parsed.name),
-          ),
-        )
-        .limit(1);
-      const person = matches[0];
-      if (person && parsed.contacted) {
-        await db
-          .update(schema.items)
-          .set({
-            payload: { ...(person.payload as PersonPayload), lastContactKey: todayKey() },
-            updatedAt: new Date(),
-          })
-          .where(eq(schema.items.id, person.id));
-        await db.insert(schema.entries).values({
-          userId: user.id,
-          module: "people",
-          type: "contact",
-          occurredAt: new Date(),
-          note: `Caught up with ${person.title}`,
-          itemId: person.id,
-        });
-      } else if (!person) {
-        await db.insert(schema.items).values({
-          userId: user.id,
-          module: "people",
-          type: "person",
-          title: parsed.name,
-          payload: {
-            checkInDays: 30,
-            giftIdeas: [],
-            lastContactKey: parsed.contacted ? todayKey() : undefined,
-          } satisfies PersonPayload,
-        });
+          )).limit(1);
+          if (person && parsed.contacted) {
+            await db.update(schema.items).set({
+              payload: { ...(person.payload as PersonPayload), lastContactKey: capturedDay },
+              updatedAt: capturedAt,
+            }).where(and(eq(schema.items.id, person.id), eq(schema.items.userId, user.id)));
+            await db.insert(schema.entries).values({
+              userId: user.id,
+              module: "people",
+              type: "contact",
+              occurredAt: capturedAt,
+              note: `Caught up with ${person.title}`,
+              itemId: person.id,
+            });
+          } else if (!person) {
+            await db.insert(schema.items).values({
+              userId: user.id,
+              module: "people",
+              type: "person",
+              title: parsed.name,
+              payload: { checkInDays: 30, giftIdeas: [], lastContactKey: parsed.contacted ? capturedDay : undefined } satisfies PersonPayload,
+              createdAt: capturedAt,
+              updatedAt: capturedAt,
+            });
+          }
+          break;
+        }
+        case "maintenance": {
+          const [item] = await db.insert(schema.items).values({
+            userId: user.id,
+            module: "home",
+            type: "maintenance",
+            title: parsed.title,
+            payload: { dueDate: capturedDay, completedCount: 0 } satisfies MaintenancePayload,
+            createdAt: capturedAt,
+            updatedAt: capturedAt,
+          }).returning();
+          await db.insert(schema.reminders).values({
+            userId: user.id,
+            itemId: item.id,
+            schedule: "once",
+            nextFireAt: dayStart(capturedDay),
+          });
+          break;
+        }
+        case "task": {
+          const dueKey = parsed.due === "today"
+            ? capturedDay
+            : parsed.due === "tomorrow"
+              ? nextDueKey(capturedDay, "daily")
+              : null;
+          const [item] = await db.insert(schema.items).values({
+            userId: user.id,
+            module: "tasks",
+            type: "task",
+            title: parsed.title,
+            createdAt: capturedAt,
+            updatedAt: capturedAt,
+          }).returning();
+          await db.insert(schema.tasks).values({
+            itemId: item.id,
+            dueAt: dueKey ? dayNoon(dueKey) : null,
+            priority: parsed.priority,
+          });
+          break;
+        }
       }
-      break;
-    }
-    case "maintenance": {
-      const [item] = await db
-        .insert(schema.items)
-        .values({
-          userId: user.id,
-          module: "home",
-          type: "maintenance",
-          title: parsed.title,
-          payload: { dueDate: todayKey(), completedCount: 0 } satisfies MaintenancePayload,
-        })
-        .returning();
-      await db.insert(schema.reminders).values({
-        userId: user.id,
-        itemId: item.id,
-        schedule: "once",
-        nextFireAt: dayStart(todayKey()),
-      });
-      break;
-    }
-    case "task": {
-      const dueKey =
-        parsed.due === "today"
-          ? todayKey()
-          : parsed.due === "tomorrow"
-            ? nextDueKey(todayKey(), "daily")
-            : null;
-      const [item] = await db
-        .insert(schema.items)
-        .values({
-          userId: user.id,
-          module: "tasks",
-          type: "task",
-          title: parsed.title,
-        })
-        .returning();
-      await db.insert(schema.tasks).values({
-        itemId: item.id,
-        dueAt: dueKey ? dayNoon(dueKey) : null,
-        priority: parsed.priority,
-      });
-      break;
-    }
+    });
+  } catch (error) {
+    if (postgresErrorCode(error) !== "23505") throw error;
+    const db = await getDb();
+    const [receipt] = await db.select({ id: schema.entries.id }).from(schema.entries).where(and(
+      eq(schema.entries.id, clientId),
+      eq(schema.entries.userId, user.id),
+      eq(schema.entries.module, "capture"),
+      eq(schema.entries.type, "receipt"),
+    )).limit(1);
+    if (!receipt) throw error;
+    return { ok: true, status: "duplicate" };
   }
-  revalidateAll();
+  revalidateAll("/today");
+  return { ok: true, status: "captured" };
 }
 
 // ---------------------------------------------------------------------------
@@ -1777,7 +2202,8 @@ export async function saveReview(formData: FormData) {
       payload,
     });
   }
-  revalidateAll();
+  revalidateAll("/review");
+  redirectFresh("/review");
 }
 
 // ---------------------------------------------------------------------------
@@ -1824,5 +2250,5 @@ export async function saveJournal(formData: FormData) {
       payload: mood ? { mood } : {},
     });
   }
-  revalidateAll();
+  revalidateAll("/journal");
 }

@@ -7,6 +7,9 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
+    "alpha:check": "node scripts/alpha-check.mjs",
+    "alpha:e2e": "node scripts/e2e/run-alpha-local.mjs",
+    "alpha:production-smoke": "node scripts/production-smoke.mjs",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate"
   },

@@ -1,3 +1,7 @@
+"use client";
+
+import { useEffect, useState } from "react";
+
 export function ProgressRing({
   done,
   total,
@@ -7,13 +11,24 @@ export function ProgressRing({
   total: number;
   size?: number;
 }) {
+  const [visibleDone, setVisibleDone] = useState(done);
+  useEffect(() => {
+    const update = (event: Event) => {
+      const delta = (event as CustomEvent<{ delta?: number }>).detail?.delta;
+      if (typeof delta === "number") {
+        setVisibleDone((current) => Math.max(0, Math.min(total, current + delta)));
+      }
+    };
+    window.addEventListener("megaapp:progress-delta", update);
+    return () => window.removeEventListener("megaapp:progress-delta", update);
+  }, [total]);
   const stroke = 6;
   const r = (size - stroke) / 2;
   const c = 2 * Math.PI * r;
-  const fraction = total > 0 ? Math.min(done / total, 1) : 0;
+  const fraction = total > 0 ? Math.min(visibleDone / total, 1) : 0;
 
   return (
-    <svg width={size} height={size} role="img" aria-label={`${done} of ${total} done`}>
+    <svg width={size} height={size} role="img" aria-label={`${visibleDone} of ${total} done`}>
       <circle
         cx={size / 2}
         cy={size / 2}
@@ -45,7 +60,7 @@ export function ProgressRing({
         textAnchor="middle"
         className="fill-current text-sm font-bold"
       >
-        {fraction >= 1 ? "✓" : `${done}/${total}`}
+        {fraction >= 1 ? "✓" : `${visibleDone}/${total}`}
       </text>
     </svg>
   );

@@ -6,15 +6,14 @@ const browser = await chromium.launch({
   executablePath: process.env.CHROMIUM_PATH || undefined,
 });
 const page = await browser.newPage({ viewport: { width: 1280, height: 1000 } });
-const base = "http://localhost:3000";
-const settle = () => page.waitForTimeout(1200);
+const base = process.env.BASE_URL || "http://localhost:3000";
 
 async function addRecipe(title, ingredients, link = "") {
   await page.fill('input[name="title"]', title);
   await page.fill('textarea[name="ingredients"]', ingredients);
   if (link) await page.fill('input[name="link"]', link);
   await page.click('button:has-text("Add recipe")');
-  await settle();
+  await page.locator("article", { hasText: title }).first().waitFor();
 }
 
 await page.goto(`${base}/meals`, { waitUntil: "networkidle" });
@@ -32,11 +31,11 @@ await dinnerSelects.nth(0).selectOption({ label: "Ginger chicken rice" });
 await dinnerSelects.nth(1).selectOption({ label: "Tofu rice bowl" });
 await dinnerSelects.nth(2).selectOption({ label: "Ginger chicken rice" });
 await page.click('button:has-text("Save week")');
-await settle();
+await page.locator('button:has-text("Update week")').waitFor();
 console.log("weekly plan saved:", (await page.locator('button:has-text("Update week")').count()) > 0);
 
 await page.click('button:has-text("Generate grocery list")');
-await settle();
+await page.locator('button[aria-label="Check Chicken thighs"]').waitFor();
 console.log("generated chicken:", (await page.locator('button[aria-label="Check Chicken thighs"]').count()) === 1);
 console.log("deduped rice:", (await page.locator('button[aria-label="Check Rice"]').count()) === 1);
 console.log("generated tofu:", (await page.locator('button[aria-label="Check Tofu"]').count()) === 1);
@@ -46,7 +45,7 @@ await page.screenshot({ path: "e2e5-meals-desktop.png", fullPage: true });
 await page.goto(`${base}/today`, { waitUntil: "networkidle" });
 await page.fill('input[name="text"]', "buy milk");
 await page.press('input[name="text"]', "Enter");
-await settle();
+await page.waitForFunction(() => JSON.parse(localStorage.getItem("megaapp:quick-capture-queue:v1") || "[]").length === 0);
 
 // The full flow must remain usable at the 390px target viewport.
 const mobile = await browser.newPage({
