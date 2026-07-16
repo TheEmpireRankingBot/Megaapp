@@ -7,7 +7,6 @@ const browser = await chromium.launch({
 });
 const page = await browser.newPage({ viewport: { width: 1280, height: 1100 } });
 const base = process.env.BASE_URL || "http://localhost:3000";
-const settle = () => page.waitForTimeout(1200);
 
 // --- Today should prompt the review only on the weekend ---
 await page.goto(`${base}/today`, { waitUntil: "networkidle" });

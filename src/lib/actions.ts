@@ -701,15 +701,23 @@ export async function createRecipe(formData: FormData) {
 
   const user = await getCurrentUser();
   const db = await getDb();
-  await db.insert(schema.items).values({
-    userId: user.id,
-    module: "meals",
-    type: "recipe",
-    title,
-    payload: { ingredients, ...(link ? { link } : {}) },
-  });
+  const [created] = await db
+    .insert(schema.items)
+    .values({
+      userId: user.id,
+      module: "meals",
+      type: "recipe",
+      title,
+      payload: { ingredients, ...(link ? { link } : {}) },
+    })
+    .returning();
   revalidateAll("/meals");
-  redirectFresh("/meals");
+  return {
+    itemId: created.id,
+    title,
+    ingredients,
+    ...(link ? { link } : {}),
+  };
 }
 
 export async function saveMealPlan(formData: FormData) {
@@ -743,7 +751,9 @@ export async function saveMealPlan(formData: FormData) {
   );
 
   const existing = await getMealPlanForWeek(user.id, weekStart);
+  let itemId: string;
   if (existing) {
+    itemId = existing.itemId;
     await db
       .update(schema.items)
       .set({ payload: { days }, updatedAt: new Date() })
@@ -754,16 +764,20 @@ export async function saveMealPlan(formData: FormData) {
         ),
       );
   } else {
-    await db.insert(schema.items).values({
-      userId: user.id,
-      module: "meals",
-      type: "plan",
-      title: weekStart,
-      payload: { days },
-    });
+    const [created] = await db
+      .insert(schema.items)
+      .values({
+        userId: user.id,
+        module: "meals",
+        type: "plan",
+        title: weekStart,
+        payload: { days },
+      })
+      .returning();
+    itemId = created.id;
   }
   revalidateAll("/meals");
-  redirectFresh("/meals");
+  return { itemId, weekStart, days };
 }
 
 async function writeGroceryList(userId: string, items: GroceryItem[]) {
@@ -830,15 +844,13 @@ export async function generateGroceryList() {
       item.done,
     ]),
   );
-  await writeGroceryList(
-    user.id,
-    generated.map((name) => ({
-      name,
-      done: doneByName.get(name.toLocaleLowerCase("en-SG")) ?? false,
-    })),
-  );
+  const items = generated.map((name) => ({
+    name,
+    done: doneByName.get(name.toLocaleLowerCase("en-SG")) ?? false,
+  }));
+  const itemId = await writeGroceryList(user.id, items);
   revalidateAll("/meals");
-  redirectFresh("/meals");
+  return { itemId, items };
 }
 
 export async function toggleGroceryItem(formData: FormData) {
@@ -871,7 +883,6 @@ export async function toggleGroceryItem(formData: FormData) {
     .set({ payload: { items }, updatedAt: new Date() })
     .where(eq(schema.items.id, row.id));
   revalidateAll("/meals");
-  redirectFresh("/meals");
 }
 
 // ---------------------------------------------------------------------------

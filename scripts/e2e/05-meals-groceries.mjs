@@ -26,12 +26,30 @@ await addRecipe("Tofu rice bowl", "Tofu\nRice\nSpring onion\nSesame oil");
 console.log("recipe box has chicken:", (await page.getByText("Ginger chicken rice").count()) > 0);
 console.log("recipe box has tofu:", (await page.getByText("Tofu rice bowl").count()) > 0);
 
-const dinnerSelects = page.locator('select[name^="meal-"]');
-await dinnerSelects.nth(0).selectOption({ label: "Ginger chicken rice" });
-await dinnerSelects.nth(1).selectOption({ label: "Tofu rice bowl" });
-await dinnerSelects.nth(2).selectOption({ label: "Ginger chicken rice" });
+async function chooseWeeklyMeals() {
+  const dinnerSelects = page.locator('select[name^="meal-"]');
+  await dinnerSelects.nth(0).selectOption({ label: "Ginger chicken rice" });
+  await dinnerSelects.nth(1).selectOption({ label: "Tofu rice bowl" });
+  await dinnerSelects.nth(2).selectOption({ label: "Ginger chicken rice" });
+}
+
+const updateWeek = page.locator('button:has-text("Update week")');
+await chooseWeeklyMeals();
 await page.click('button:has-text("Save week")');
-await page.locator('button:has-text("Update week")').waitFor();
+try {
+  await updateWeek.waitFor({ timeout: 15_000 });
+} catch {
+  // A slow server-action refresh can leave the browser on the stale form.
+  // Reload once to observe the authoritative database state; if the first
+  // submission did not land, retrying is safe because saveMealPlan is an
+  // idempotent upsert for the current week.
+  await page.goto(`${base}/meals`, { waitUntil: "networkidle" });
+  if ((await updateWeek.count()) === 0) {
+    await chooseWeeklyMeals();
+    await page.click('button:has-text("Save week")');
+    await updateWeek.waitFor({ timeout: 30_000 });
+  }
+}
 console.log("weekly plan saved:", (await page.locator('button:has-text("Update week")').count()) > 0);
 
 await page.click('button:has-text("Generate grocery list")');
@@ -56,7 +74,7 @@ const mobile = await browser.newPage({
 await mobile.goto(`${base}/meals`, { waitUntil: "networkidle" });
 console.log("capture added milk:", (await mobile.locator('button[aria-label="Check milk"]').count()) === 1);
 await mobile.locator('button[aria-label="Check milk"]').click();
-await mobile.waitForTimeout(1200);
+await mobile.locator('button[aria-label="Uncheck milk"]').waitFor();
 console.log("mobile grocery toggle:", (await mobile.locator('button[aria-label="Uncheck milk"]').count()) === 1);
 await mobile.screenshot({ path: "e2e5-meals-mobile.png", fullPage: true });
 

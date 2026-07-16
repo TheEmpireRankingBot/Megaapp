@@ -7,7 +7,6 @@ const browser = await chromium.launch({
 });
 const page = await browser.newPage({ viewport: { width: 1280, height: 950 } });
 const base = process.env.BASE_URL || "http://localhost:3000";
-const settle = () => page.waitForTimeout(1200);
 
 async function capture(text) {
   await page.fill('input[name="text"]', text);
