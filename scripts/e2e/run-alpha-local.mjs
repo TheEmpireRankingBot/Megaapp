@@ -21,14 +21,27 @@ const chromiumPath =
     ? "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe"
     : undefined);
 const baseUrl = process.env.BASE_URL || "http://localhost:3000";
-try {
-  const health = await fetch(`${baseUrl}/api/health`, { signal: AbortSignal.timeout(90_000) });
-  if (!health.ok) throw new Error(`HTTP ${health.status}`);
-  console.log(`Preflight health ready at ${baseUrl}`);
-} catch (error) {
-  console.error(`Alpha browser preflight failed at ${baseUrl}: ${error instanceof Error ? error.message : String(error)}`);
+const preflightDeadline = Date.now() + 90_000;
+let preflightError = "server did not respond";
+let preflightReady = false;
+while (Date.now() < preflightDeadline) {
+  try {
+    const health = await fetch(`${baseUrl}/api/health`, {
+      signal: AbortSignal.timeout(5_000),
+    });
+    if (!health.ok) throw new Error(`HTTP ${health.status}`);
+    preflightReady = true;
+    break;
+  } catch (error) {
+    preflightError = error instanceof Error ? error.message : String(error);
+    await new Promise((resolve) => setTimeout(resolve, 500));
+  }
+}
+if (!preflightReady) {
+  console.error(`Alpha browser preflight failed at ${baseUrl}: ${preflightError}`);
   process.exit(1);
 }
+console.log(`Preflight health ready at ${baseUrl}`);
 const requestedStart = process.env.ALPHA_E2E_START?.trim();
 const startIndex = requestedStart
   ? scripts.findIndex((script) => script.startsWith(requestedStart))
