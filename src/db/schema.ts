@@ -156,7 +156,7 @@ export const reminders = pgTable(
 );
 
 // Browser endpoints used by the Web Push delivery channel. A subscription is
-// tied to one authenticated user and one browser profile/device.
+// tied to the single app user and one browser profile/device.
 export const pushSubscriptions = pgTable(
   "push_subscriptions",
   {

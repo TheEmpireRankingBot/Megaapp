@@ -37,11 +37,9 @@ function placeholder(name, raw) {
     : null;
 }
 
-function validateStrictEnvironment(publishableName) {
+function validateStrictEnvironment() {
   const checks = [];
   const databaseUrl = value("DATABASE_URL");
-  const supabaseUrl = value("NEXT_PUBLIC_SUPABASE_URL");
-  const publishableKey = value(publishableName);
   const vapidPublicKey = value("NEXT_PUBLIC_VAPID_PUBLIC_KEY");
   const vapidPrivateKey = value("VAPID_PRIVATE_KEY");
   const vapidSubject = value("VAPID_SUBJECT");
@@ -49,8 +47,6 @@ function validateStrictEnvironment(publishableName) {
 
   for (const [name, raw] of [
     ["DATABASE_URL", databaseUrl],
-    ["NEXT_PUBLIC_SUPABASE_URL", supabaseUrl],
-    [publishableName, publishableKey],
     ["NEXT_PUBLIC_VAPID_PUBLIC_KEY", vapidPublicKey],
     ["VAPID_PRIVATE_KEY", vapidPrivateKey],
     ["VAPID_SUBJECT", vapidSubject],
@@ -66,14 +62,6 @@ function validateStrictEnvironment(publishableName) {
   } catch {
     checks.push("DATABASE_URL is not a valid URL");
   }
-  try {
-    const parsed = new URL(supabaseUrl);
-    if (parsed.protocol !== "https:") checks.push("NEXT_PUBLIC_SUPABASE_URL must use https://");
-  } catch {
-    checks.push("NEXT_PUBLIC_SUPABASE_URL is not a valid URL");
-  }
-  if (publishableKey.length < 20) checks.push(`${publishableName} is unexpectedly short`);
-  if (publishableKey && !/^[A-Za-z0-9._-]+$/.test(publishableKey)) checks.push(`${publishableName} has an unexpected format`);
   if (vapidPublicKey.length < 60) checks.push("NEXT_PUBLIC_VAPID_PUBLIC_KEY is unexpectedly short");
   if (vapidPublicKey && !/^[A-Za-z0-9_-]+$/.test(vapidPublicKey)) checks.push("NEXT_PUBLIC_VAPID_PUBLIC_KEY must be base64url text");
   if (vapidPrivateKey.length < 40) checks.push("VAPID_PRIVATE_KEY is unexpectedly short");
@@ -116,15 +104,11 @@ assert(
   "vercel.json must schedule the notification cron route",
 );
 
-const publishableName = process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY?.trim()
-  ? "NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY"
-  : "NEXT_PUBLIC_SUPABASE_ANON_KEY";
 const strict = process.env.ALPHA_STRICT === "1";
-environmentGroup("Supabase auth", ["NEXT_PUBLIC_SUPABASE_URL", publishableName], strict);
 environmentGroup("Web Push", ["NEXT_PUBLIC_VAPID_PUBLIC_KEY", "VAPID_PRIVATE_KEY", "VAPID_SUBJECT"], strict);
 if (strict && !process.env.DATABASE_URL?.trim()) failures.push("DATABASE_URL is required in strict mode");
 if (strict && !process.env.CRON_SECRET?.trim()) failures.push("CRON_SECRET is required in strict mode");
-if (strict) validateStrictEnvironment(publishableName);
+if (strict) validateStrictEnvironment();
 if (!strict && !process.env.DATABASE_URL?.trim()) warnings.push("Using embedded PGlite (correct for local development)");
 
 if (process.env.BASE_URL?.trim()) {

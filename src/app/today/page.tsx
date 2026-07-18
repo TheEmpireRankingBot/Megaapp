@@ -8,8 +8,6 @@ import { ProgressRing } from "@/components/progress-ring";
 import { TaskRow } from "@/components/task-row";
 import { HabitRow } from "@/components/habit-row";
 import { QuickCapture } from "@/components/quick-capture";
-import { signOut } from "@/lib/auth-actions";
-import { isSupabaseConfigured } from "@/lib/supabase/config";
 import { NotificationControl } from "@/components/notification-control";
 import { getPlanningBrief } from "@/lib/calendar";
 import { DatabaseZap, Search as SearchIcon } from "lucide-react";
@@ -100,16 +98,6 @@ export default async function TodayPage() {
           >
             <SearchIcon size={17} />
           </Link>
-          {isSupabaseConfigured() && (
-            <form action={signOut}>
-              <button
-                type="submit"
-                className="text-xs text-black/45 underline-offset-2 hover:underline dark:text-white/45"
-              >
-                Sign out
-              </button>
-            </form>
-          )}
           <ProgressRing key={`${score.done}-${score.total}`} done={score.done} total={score.total} />
         </div>
       </header>

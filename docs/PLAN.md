@@ -96,7 +96,7 @@ The primitives every module is built on. Getting these right is 80% of the proje
 | UI | **Tailwind CSS + shadcn/ui** | Fast to build, consistent, looks good without a designer. |
 | Database | **Postgres via Supabase** | Free tier is plenty for personal use; gives auth, storage, and realtime for free; plain Postgres means no lock-in. |
 | ORM | **Drizzle** | Type-safe schema in code, painless migrations. |
-| Auth | **Supabase Auth** | Email + OAuth out of the box; supports adding a partner/family member later. |
+| Access | **Automatic single-user** | Fast private-owner workflow for the current alpha; add household auth only when sharing becomes a real requirement. |
 | Hosting | **Vercel** (app) + Supabase (data) | Both free-tier friendly; push-to-deploy. |
 | PWA | Installable, offline-tolerant quick capture | Capture must work in a dead zone; sync when back online. |
 | AI layer (Phase 5) | Claude API over the personal DB | Tool-use queries against your own data. |
@@ -137,7 +137,7 @@ Each phase is a usable vertical slice, roughly 2–4 weeks of part-time effort.
 **Current build (2026-07-15):** Phases 0–4 are complete apart from external Google Calendar sync. Phase 5 has an Assistant with a useful local briefing plus an optional OpenAI Responses API path over a compact, Vault-excluding data snapshot. It can prepare tasks, expenses, calendar events, and habits through a limited command grammar, but a separate explicit confirmation is required before a scoped server action writes anything. A local-first Import Center now previews and validates CSV files for those same four modules, deduplicates confirmed batches against existing data, and records exportable import audits. Alpha hardening adds recovery boundaries, a non-secret health endpoint, complete PWA icons, fail-closed hosted configuration, and a clean-database acceptance runner. Quick Capture now satisfies the dead-zone requirement through a cached offline launch shell, bounded on-device queue, original timestamps, and atomic server receipts that make reconnect retries idempotent. Frequent daily interactions now render optimistic feedback with rollback, and administrative forms force fresh post-save routes to avoid same-page cache stalls. Web Push, Insights, and global Search are also built. The main open work is owner production acceptance, richer confirmed tools, and external integrations.
 
 ### Phase 0 — Foundation (week 1)
-Scaffold Next.js + Tailwind + Supabase + Drizzle; auth with a single account; core tables (`items`, `entries`, `tags`, `reminders`); app shell with navigation; deploy pipeline to Vercel; JSON export endpoint.
+Scaffold Next.js + Tailwind + Supabase Postgres + Drizzle; automatic single-user access; core tables (`items`, `entries`, `tags`, `reminders`); app shell with navigation; deploy pipeline to Vercel; JSON export endpoint.
 **Done when:** you can log in on your phone and laptop and see an empty Today screen, and the whole thing redeploys on push.
 
 ### Phase 1 — The daily loop (MVP)
@@ -188,5 +188,5 @@ The plan proceeds with the recommendations below unless you say otherwise:
 ## 8. Immediate next steps
 
 1. Confirm or adjust the open decisions above (or just say "go").
-2. Phase 0: scaffold the app, database, auth, and deploy pipeline.
+2. Phase 0: scaffold the app, database, owner access, and deploy pipeline.
 3. Write `docs/modules/tasks.md` — the first module spec — and start Phase 1.

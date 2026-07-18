@@ -14,4 +14,4 @@ An attempted package override to PostCSS 8.5.17 was rejected because it stalled 
 
 ## Reporting and secrets
 
-Do not commit `.env` files, database URLs, VAPID private keys, cron secrets, Supabase keys, or Vault passphrases. Rotate any credential that appears in logs or source control. Use the non-secret `/api/health` response and `npm run alpha:production-smoke` for deployment diagnostics.
+Do not commit `.env` files, database URLs, VAPID private keys, cron secrets, or Vault passphrases. Rotate any credential that appears in logs or source control. Use the non-secret `/api/health` response and `npm run alpha:production-smoke` for deployment diagnostics.

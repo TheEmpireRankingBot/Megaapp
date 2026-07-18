@@ -14,18 +14,11 @@ function completeGroup(names: string[]) {
 
 export async function GET() {
   const startedAt = Date.now();
-  const authNames = [
-    "NEXT_PUBLIC_SUPABASE_URL",
-    process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY?.trim()
-      ? "NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY"
-      : "NEXT_PUBLIC_SUPABASE_ANON_KEY",
-  ];
   const pushNames = ["NEXT_PUBLIC_VAPID_PUBLIC_KEY", "VAPID_PRIVATE_KEY", "VAPID_SUBJECT"];
   const hosted = Boolean(process.env.VERCEL || process.env.MEGAAPP_REQUIRE_EXTERNAL_DB === "1");
   const configurationValid =
-    completeGroup(authNames) &&
     completeGroup(pushNames) &&
-    (!hosted || (Boolean(process.env.DATABASE_URL?.trim()) && configured(authNames).every(Boolean)));
+    (!hosted || Boolean(process.env.DATABASE_URL?.trim()));
 
   try {
     const db = await getDb();
@@ -35,7 +28,7 @@ export async function GET() {
       {
         status: configurationValid ? "ok" : "degraded",
         database: process.env.DATABASE_URL ? "external" : "embedded",
-        auth: configured(authNames).every(Boolean) ? "supabase" : "local",
+        access: "single-user",
         notifications: configured(pushNames).every(Boolean) ? "configured" : "disabled",
         durationMs: Date.now() - startedAt,
       },
@@ -47,7 +40,7 @@ export async function GET() {
       {
         status: "error",
         database: "unavailable",
-        auth: configured(authNames).every(Boolean) ? "supabase" : "local",
+        access: "single-user",
         notifications: configured(pushNames).every(Boolean) ? "configured" : "disabled",
         durationMs: Date.now() - startedAt,
       },

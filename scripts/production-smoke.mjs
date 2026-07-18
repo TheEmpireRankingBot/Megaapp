@@ -40,9 +40,9 @@ try {
     healthResponse.ok &&
       health.status === "ok" &&
       health.database === "external" &&
-      health.auth === "supabase" &&
+      health.access === "single-user" &&
       health.notifications === "configured",
-    "production health reports external DB, Supabase auth, and notifications",
+    "production health reports external DB, automatic single-user access, and notifications",
     `HTTP ${healthResponse.status} ${JSON.stringify(health)}`,
   );
   check(
@@ -50,12 +50,12 @@ try {
     "health response exposes no credential-shaped fields",
   );
 
-  const protectedResponse = await get("/today");
-  const location = protectedResponse.headers.get("location") ?? "";
+  const appResponse = await get("/today");
+  const appHtml = await appResponse.text();
   check(
-    [301, 302, 303, 307, 308].includes(protectedResponse.status) && location.includes("/login"),
-    "unauthenticated production app redirects to login",
-    `HTTP ${protectedResponse.status} location=${location || "missing"}`,
+    appResponse.ok && /Megaapp|Today|Good (?:morning|afternoon|evening)/i.test(appHtml),
+    "production app opens without sign-in",
+    `HTTP ${appResponse.status}`,
   );
 
   const cronResponse = await get("/api/cron/notifications");

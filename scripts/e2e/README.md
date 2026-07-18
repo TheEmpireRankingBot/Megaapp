@@ -17,6 +17,7 @@ node scripts/e2e/02-capture-money-health.mjs
 node scripts/e2e/03-subscriptions.mjs
 node scripts/e2e/04-weekly-review.mjs
 node scripts/e2e/05-meals-groceries.mjs
+node scripts/e2e/06-auth-boundary.mjs
 node scripts/e2e/08-insights.mjs
 node scripts/e2e/09-planning-discovery.mjs
 node scripts/e2e/10-life-admin-vault.mjs
@@ -27,15 +28,7 @@ node scripts/e2e/14-alpha-readiness.mjs
 node scripts/e2e/15-offline-capture.mjs
 ```
 
-Auth routing is a separate run because it starts the server with placeholder
-Supabase variables. It does not send email or require a real Supabase project:
-
-```bash
-NEXT_PUBLIC_SUPABASE_URL=https://example.supabase.co \
-NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY=sb_publishable_test \
-npm run start
-node scripts/e2e/06-auth-boundary.mjs
-```
+`06-auth-boundary.mjs` is part of the ordered suite and verifies that Today opens directly, no email form exists, and legacy login/email-link URLs redirect into the app.
 
 Notifications are another separate run because the opt-in only appears when
 VAPID is configured. Generate a throwaway key pair for local verification and

@@ -18,7 +18,7 @@ The complete context needed to build on this codebase without guessing. Written 
 | Weekly review | ✅ merged & verified — PR #2 |
 | Meals & groceries | ✅ built & verified — recipes, weekly dinner plan, generated grocery list, `buy` capture |
 | Deployment | ✅ Through Assistant Actions pushed in `3038372`; current Import Center bundle remains local |
-| Auth | ✅ optional Supabase SSR magic-link auth; zero-config local fallback retained |
+| Access | ✅ automatic single-user access; oldest owner row preserves existing data |
 | Notifications | ✅ Web Push opt-in, due reminders, evening streak risk, weekend review, secured cron |
 | Insights | ✅ 12-week habits/mood/sleep patterns and eight-week spend trend |
 | Calendar | ✅ local events, 30-day agenda, Today integration; Google sync remains |
@@ -53,10 +53,7 @@ src/db/schema.ts        all tables (Drizzle, pg dialect)
 src/db/index.ts         getDb() driver switch + PGlite automigrate
 drizzle/                generated SQL migrations (never hand-edit)
 src/lib/dates.ts        THE ONLY place for day/timezone logic (SG, fixed +08:00)
-src/lib/user.ts         getCurrentUser() — Supabase session → users row; local fallback
-src/lib/supabase/       config + cookie-backed server client + Proxy refresh helper
-src/lib/auth-actions.ts magic-link request + sign-out server actions
-src/proxy.ts            Next.js 16 auth boundary; protects app routes when configured
+src/lib/user.ts         getCurrentUser() — deterministic automatic single-user row
 src/lib/actions.ts      every server action ("use server")
 src/lib/data.ts         tasks/habits/journal/Today queries + types
 src/lib/money.ts        expenses, budget, subscriptions queries; formatSGD; CATEGORIES
@@ -148,7 +145,7 @@ Semantics that matter:
 ## 4. Conventions (follow these exactly)
 
 1. **Dates**: all day math goes through `src/lib/dates.ts`. Day keys are `YYYY-MM-DD` strings in **Asia/Singapore** (fixed `+08:00`, no DST). Never do timezone/day arithmetic anywhere else. Date-only stamps use `dayNoon()`; ranges use `dayStart()`/`dayEnd()`.
-2. **Server actions** (`src/lib/actions.ts`): exported async functions taking `FormData`; validate inputs and **silently return on bad input** (no throws for user input); always scope by `user.id`; always call `revalidateAll()` (which revalidates every module path) after a write. Add new module paths to `MODULE_PATHS`. Supabase login/logout actions live separately in `auth-actions.ts` because they mutate Auth cookies, not domain data.
+2. **Server actions** (`src/lib/actions.ts`): exported async functions taking `FormData`; validate inputs and **silently return on bad input** (no throws for user input); always scope by `user.id`; always call `revalidateAll()` (which revalidates every module path) after a write. Add new module paths to `MODULE_PATHS`.
 3. **Every query is scoped by `userId`** even though there's one user — this is what makes the auth swap (§6) a one-file change.
 4. **Styling idiom** (no shadcn yet — don't introduce it casually): neutral tokens via opacity — `border-black/10 dark:border-white/10`, muted text `text-black/50 dark:text-white/50`, hover `hover:bg-black/[.03] dark:hover:bg-white/[.04]`. Cards `rounded-xl border p-4`, inputs `rounded-lg`. Meaning colors: **emerald** = success/done, **amber** = warning/upcoming, **red** = danger/overdue/priority, **sky** = water only. Icons: `lucide-react`, size 14–20. Section headers: `text-sm font-semibold uppercase tracking-wide text-black/50`.
 5. **Pages** that read the DB declare `export const dynamic = "force-dynamic"` and fetch in parallel with `Promise.all`.
@@ -176,7 +173,7 @@ npm run db:migrate     # against real Postgres (DATABASE_URL)
 
 ## 6. Known gaps, gotchas, and how to fix them
 
-- **Auth requires deployment configuration.** Configure the Site URL, redirect allow-list, and SSR token-hash Magic Link template exactly as documented in README §Deploy. Partial configuration fails closed, and Vercel/strict hosted mode also fails closed when both variables are absent. Only local development retains the zero-config fallback.
+- **Automatic access has no app-level privacy boundary.** Megaapp reuses the oldest `users` row and opens directly. Anyone who can reach an unprotected deployment URL can read and change that owner's data; use Vercel Deployment Protection or another network-level gate if the URL should remain private.
 - **Web Push requires deployment variables.** Set both VAPID keys, `VAPID_SUBJECT`, and `CRON_SECRET`; without a complete set the Today opt-in stays hidden and the cron returns 503. The default Hobby-compatible cron runs nightly at 21:00 SG. Morning brief logic exists but needs an additional scheduler invocation on a plan that permits it.
 - **Offline Quick Capture is deliberately bounded.** The latest 50 captures remain in origin-local storage until individually confirmed by the server. Captures older than 90 days use the reconnect time; all normal offline captures preserve their original Singapore day and timestamp. Only Quick Capture is queued—other mutations require a connection—and the service worker never caches private app HTML or data.
 - **Function/database region affects responsiveness.** The dashboard query waterfalls are parallelized and common filters indexed, but Vercel Functions must still be set to the Supabase database region in Vercel Settings → Functions.
@@ -201,12 +198,12 @@ Each spec follows the house pattern: data on the primitives, queries in `src/lib
 - **Retention hook**: one Sunday plan becomes one reusable shopping list; the list shows picked-up progress and a completion nudge.
 - **Verified**: `scripts/e2e/05-meals-groceries.mjs` exercises the complete UI at desktop and 390px, Quick Capture, deduplication, toggling, and JSON export.
 
-### 7.2 Supabase Auth — shipped 2026-07-12
+### 7.2 Automatic single-user access — replaced Supabase Auth 2026-07-19
 
-- `@supabase/ssr` + Next.js 16 `proxy.ts` guard every app/API route except `/login`, `/auth/*`, and static PWA assets. The boundary verifies JWTs with `getClaims()`; server data access revalidates the user with `getUser()`.
-- Magic-link request, PKCE callback, token-hash confirmation, sign-out, and session-to-`users` email mapping are implemented. First login creates the app user row safely under the email unique constraint.
-- Env: `NEXT_PUBLIC_SUPABASE_URL` plus `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` (or legacy `NEXT_PUBLIC_SUPABASE_ANON_KEY`), alongside `DATABASE_URL`. No auth env vars preserves PGlite + the local seeded user.
-- **Verified**: the full local browser suite still passes without env vars; `06-auth-boundary.mjs` proves configured unauthenticated requests redirect to login and static PWA assets remain public. A real email round trip requires the owner's Supabase project configuration.
+- The email form, session proxy, Supabase Auth clients, and sign-out action were removed. `/login` and legacy `/auth/*` links redirect to `/today`.
+- `getCurrentUser()` always reuses the oldest `users` row, preserving the original owner's scoped data. A race-safe local row is created only when the table is empty.
+- Only `DATABASE_URL` is required for hosted access; Supabase URL and publishable/anon keys are no longer used.
+- `06-auth-boundary.mjs` verifies direct mobile access, absence of email-link UI, legacy redirects, and public PWA assets.
 
 ### 7.3 Notifications — shipped locally 2026-07-13
 

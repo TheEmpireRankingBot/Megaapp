@@ -1,9 +1,4 @@
-// Auth boundary verification. Start the production server with placeholder
-// Supabase values (no real project is required for unauthenticated routing):
-//
-// NEXT_PUBLIC_SUPABASE_URL=https://example.supabase.co
-// NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY=sb_publishable_test
-// npm run start
+// Automatic single-user access verification. No auth variables are required.
 import { chromium } from "playwright-core";
 
 const browser = await chromium.launch({
@@ -13,13 +8,18 @@ const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
 const base = process.env.BASE_URL || "http://localhost:3000";
 
 await page.goto(`${base}/today`, { waitUntil: "networkidle" });
-console.log("protected route redirects:", page.url().includes("/login?next=%2Ftoday"));
-console.log("magic-link form shown:", (await page.getByText("Email me a sign-in link").count()) === 1);
-console.log("app navigation hidden:", (await page.getByText("Tasks", { exact: true }).count()) === 0);
+console.log("today opens directly:", page.url().endsWith("/today"));
+console.log("app navigation shown:", (await page.getByText("Tasks", { exact: true }).count()) > 0);
+console.log("email sign-in removed:", (await page.getByText(/sign-in link/i).count()) === 0);
+
+await page.goto(`${base}/login`, { waitUntil: "networkidle" });
+console.log("legacy login redirects home:", page.url().endsWith("/today"));
 
 await page.goto(`${base}/auth/callback`, { waitUntil: "networkidle" });
-console.log("invalid callback handled:", page.url().includes("/login?error=invalid-link"));
-console.log("expired-link copy shown:", (await page.getByText(/invalid or has expired/).count()) === 1);
+console.log("legacy callback redirects home:", page.url().endsWith("/today"));
+
+await page.goto(`${base}/auth/confirm`, { waitUntil: "networkidle" });
+console.log("legacy confirmation redirects home:", page.url().endsWith("/today"));
 
 const manifest = await page.request.get(`${base}/manifest.webmanifest`);
 console.log("PWA manifest remains public:", manifest.ok());
@@ -29,6 +29,6 @@ console.log(
   offline.ok() && (await offline.text()).includes("Capture now. Sync later."),
 );
 
-await page.screenshot({ path: "e2e6-login-mobile.png", fullPage: true });
+await page.screenshot({ path: "e2e6-auto-access-mobile.png", fullPage: true });
 await browser.close();
 console.log("done");
