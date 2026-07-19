@@ -1,5 +1,9 @@
 import { asc } from "drizzle-orm";
+import { cookies } from "next/headers";
+import { redirect } from "next/navigation";
 import { getDb, schema } from "@/db";
+import { getPasswordAccessConfig, SESSION_COOKIE } from "@/lib/auth-config";
+import { verifySessionToken } from "@/lib/session";
 
 // Megaapp is intentionally single-user. Reuse the oldest row so removing the
 // auth boundary preserves data created by the previous Supabase-backed owner.
@@ -29,5 +33,9 @@ async function getSingleUser() {
 }
 
 export async function getCurrentUser() {
+  if (getPasswordAccessConfig()) {
+    const cookieStore = await cookies();
+    if (!(await verifySessionToken(cookieStore.get(SESSION_COOKIE)?.value))) redirect("/login");
+  }
   return getSingleUser();
 }

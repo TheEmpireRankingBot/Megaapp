@@ -28,7 +28,18 @@ node scripts/e2e/14-alpha-readiness.mjs
 node scripts/e2e/15-offline-capture.mjs
 ```
 
-`06-auth-boundary.mjs` is part of the ordered suite and verifies that Today opens directly, no email form exists, and legacy login/email-link URLs redirect into the app.
+Password access is a separate run because the normal local suite deliberately stays zero-config:
+
+```bash
+MEGAAPP_USERNAME=owner \
+MEGAAPP_PASSWORD=a-strong-local-password \
+MEGAAPP_SESSION_SECRET=a-random-local-secret-at-least-32-characters \
+npm run start
+MEGAAPP_USERNAME=owner MEGAAPP_PASSWORD=a-strong-local-password \
+node scripts/e2e/06-auth-boundary.mjs
+```
+
+It verifies the username/password form, removal of email-link UI, login, signed session, and legacy email-link redirects.
 
 Notifications are another separate run because the opt-in only appears when
 VAPID is configured. Generate a throwaway key pair for local verification and

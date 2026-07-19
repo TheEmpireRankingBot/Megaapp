@@ -6,7 +6,6 @@ const scripts = [
   "03-subscriptions.mjs",
   "04-weekly-review.mjs",
   "05-meals-groceries.mjs",
-  "06-auth-boundary.mjs",
   "08-insights.mjs",
   "09-planning-discovery.mjs",
   "10-life-admin-vault.mjs",

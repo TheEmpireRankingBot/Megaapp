@@ -40,6 +40,9 @@ function placeholder(name, raw) {
 function validateStrictEnvironment() {
   const checks = [];
   const databaseUrl = value("DATABASE_URL");
+  const username = value("MEGAAPP_USERNAME");
+  const password = value("MEGAAPP_PASSWORD");
+  const sessionSecret = value("MEGAAPP_SESSION_SECRET");
   const vapidPublicKey = value("NEXT_PUBLIC_VAPID_PUBLIC_KEY");
   const vapidPrivateKey = value("VAPID_PRIVATE_KEY");
   const vapidSubject = value("VAPID_SUBJECT");
@@ -47,6 +50,9 @@ function validateStrictEnvironment() {
 
   for (const [name, raw] of [
     ["DATABASE_URL", databaseUrl],
+    ["MEGAAPP_USERNAME", username],
+    ["MEGAAPP_PASSWORD", password],
+    ["MEGAAPP_SESSION_SECRET", sessionSecret],
     ["NEXT_PUBLIC_VAPID_PUBLIC_KEY", vapidPublicKey],
     ["VAPID_PRIVATE_KEY", vapidPrivateKey],
     ["VAPID_SUBJECT", vapidSubject],
@@ -62,6 +68,9 @@ function validateStrictEnvironment() {
   } catch {
     checks.push("DATABASE_URL is not a valid URL");
   }
+  if (!username || username.length > 64) checks.push("MEGAAPP_USERNAME must be 1-64 characters");
+  if (password.length < 12) checks.push("MEGAAPP_PASSWORD must be at least 12 characters");
+  if (sessionSecret.length < 32) checks.push("MEGAAPP_SESSION_SECRET must be at least 32 characters");
   if (vapidPublicKey.length < 60) checks.push("NEXT_PUBLIC_VAPID_PUBLIC_KEY is unexpectedly short");
   if (vapidPublicKey && !/^[A-Za-z0-9_-]+$/.test(vapidPublicKey)) checks.push("NEXT_PUBLIC_VAPID_PUBLIC_KEY must be base64url text");
   if (vapidPrivateKey.length < 40) checks.push("VAPID_PRIVATE_KEY is unexpectedly short");
@@ -105,6 +114,11 @@ assert(
 );
 
 const strict = process.env.ALPHA_STRICT === "1";
+environmentGroup(
+  "Password access",
+  ["MEGAAPP_USERNAME", "MEGAAPP_PASSWORD", "MEGAAPP_SESSION_SECRET"],
+  strict,
+);
 environmentGroup("Web Push", ["NEXT_PUBLIC_VAPID_PUBLIC_KEY", "VAPID_PRIVATE_KEY", "VAPID_SUBJECT"], strict);
 if (strict && !process.env.DATABASE_URL?.trim()) failures.push("DATABASE_URL is required in strict mode");
 if (strict && !process.env.CRON_SECRET?.trim()) failures.push("CRON_SECRET is required in strict mode");

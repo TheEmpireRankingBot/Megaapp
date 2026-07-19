@@ -18,7 +18,7 @@ The complete context needed to build on this codebase without guessing. Written 
 | Weekly review | ✅ merged & verified — PR #2 |
 | Meals & groceries | ✅ built & verified — recipes, weekly dinner plan, generated grocery list, `buy` capture |
 | Deployment | ✅ Through Assistant Actions pushed in `3038372`; current Import Center bundle remains local |
-| Access | ✅ automatic single-user access; oldest owner row preserves existing data |
+| Access | ✅ single-owner username/password with signed HTTP-only session cookie |
 | Notifications | ✅ Web Push opt-in, due reminders, evening streak risk, weekend review, secured cron |
 | Insights | ✅ 12-week habits/mood/sleep patterns and eight-week spend trend |
 | Calendar | ✅ local events, 30-day agenda, Today integration; Google sync remains |
@@ -53,7 +53,11 @@ src/db/schema.ts        all tables (Drizzle, pg dialect)
 src/db/index.ts         getDb() driver switch + PGlite automigrate
 drizzle/                generated SQL migrations (never hand-edit)
 src/lib/dates.ts        THE ONLY place for day/timezone logic (SG, fixed +08:00)
-src/lib/user.ts         getCurrentUser() — deterministic automatic single-user row
+src/lib/user.ts         getCurrentUser() — verified session → deterministic owner row
+src/lib/auth-config.ts  server-only username/password/session-secret validation
+src/lib/session.ts      signed 30-day session tokens; constant-time credential checks
+src/lib/auth-actions.ts username/password sign-in and sign-out cookie actions
+src/proxy.ts            hosted password boundary; local zero-config fallback
 src/lib/actions.ts      every server action ("use server")
 src/lib/data.ts         tasks/habits/journal/Today queries + types
 src/lib/money.ts        expenses, budget, subscriptions queries; formatSGD; CATEGORIES
@@ -173,7 +177,7 @@ npm run db:migrate     # against real Postgres (DATABASE_URL)
 
 ## 6. Known gaps, gotchas, and how to fix them
 
-- **Automatic access has no app-level privacy boundary.** Megaapp reuses the oldest `users` row and opens directly. Anyone who can reach an unprotected deployment URL can read and change that owner's data; use Vercel Deployment Protection or another network-level gate if the URL should remain private.
+- **Password access requires three hosted variables.** Set `MEGAAPP_USERNAME`, `MEGAAPP_PASSWORD` (12+ characters), and `MEGAAPP_SESSION_SECRET` (32+ random characters). Missing or partial hosted configuration fails closed; local development without them remains zero-config.
 - **Web Push requires deployment variables.** Set both VAPID keys, `VAPID_SUBJECT`, and `CRON_SECRET`; without a complete set the Today opt-in stays hidden and the cron returns 503. The default Hobby-compatible cron runs nightly at 21:00 SG. Morning brief logic exists but needs an additional scheduler invocation on a plan that permits it.
 - **Offline Quick Capture is deliberately bounded.** The latest 50 captures remain in origin-local storage until individually confirmed by the server. Captures older than 90 days use the reconnect time; all normal offline captures preserve their original Singapore day and timestamp. Only Quick Capture is queued—other mutations require a connection—and the service worker never caches private app HTML or data.
 - **Function/database region affects responsiveness.** The dashboard query waterfalls are parallelized and common filters indexed, but Vercel Functions must still be set to the Supabase database region in Vercel Settings → Functions.
@@ -198,12 +202,12 @@ Each spec follows the house pattern: data on the primitives, queries in `src/lib
 - **Retention hook**: one Sunday plan becomes one reusable shopping list; the list shows picked-up progress and a completion nudge.
 - **Verified**: `scripts/e2e/05-meals-groceries.mjs` exercises the complete UI at desktop and 390px, Quick Capture, deduplication, toggling, and JSON export.
 
-### 7.2 Automatic single-user access — replaced Supabase Auth 2026-07-19
+### 7.2 Single-owner password access — replaced Supabase magic links 2026-07-19
 
-- The email form, session proxy, Supabase Auth clients, and sign-out action were removed. `/login` and legacy `/auth/*` links redirect to `/today`.
-- `getCurrentUser()` always reuses the oldest `users` row, preserving the original owner's scoped data. A race-safe local row is created only when the table is empty.
-- Only `DATABASE_URL` is required for hosted access; Supabase URL and publishable/anon keys are no longer used.
-- `06-auth-boundary.mjs` verifies direct mobile access, absence of email-link UI, legacy redirects, and public PWA assets.
+- The email form and Supabase Auth clients were removed. Hosted access uses one server-side username/password pair and a separately keyed HMAC session cookie that is HTTP-only, Secure, SameSite Strict, and valid for 30 days.
+- `getCurrentUser()` revalidates the session before reusing the oldest `users` row, preserving the original owner's scoped data. A race-safe local row is created only when the table is empty.
+- Env: `MEGAAPP_USERNAME`, `MEGAAPP_PASSWORD`, and `MEGAAPP_SESSION_SECRET`, alongside `DATABASE_URL`. Missing credentials are allowed only outside hosted mode.
+- `06-auth-boundary.mjs` verifies the mobile login form, signed session, absence of email-link UI, legacy redirects, and public PWA assets.
 
 ### 7.3 Notifications — shipped locally 2026-07-13
 

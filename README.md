@@ -19,7 +19,7 @@ No configuration needed: without a `DATABASE_URL`, the app runs on an embedded P
 
 Schema lives in [`src/db/schema.ts`](src/db/schema.ts); after changing it, run `npm run db:generate` to produce a migration. Everything you own is exportable as JSON at [`/api/export`](http://localhost:3000/api/export).
 
-**Access:** Megaapp opens directly in automatic single-user mode. It reuses the oldest `users` row so existing owner data is preserved. This is convenient for a private deployment, but a publicly reachable URL has no application-level sign-in gate.
+**Access:** hosted Megaapp uses one username and password from server-only environment variables. Successful login creates a signed, HTTP-only 30-day session cookie; the password is never stored in the database or sent back to the browser. Local development remains zero-config.
 
 ## Deploy
 
@@ -30,11 +30,12 @@ The app is a standard Next.js project; the intended setup (plan §4) is Vercel +
 3. Generate a Web Push key pair once with `npx web-push generate-vapid-keys --json`. In Vercel, add the public key as `NEXT_PUBLIC_VAPID_PUBLIC_KEY`, the private key as `VAPID_PRIVATE_KEY`, and `VAPID_SUBJECT` as a contact such as `mailto:you@example.com`. Never expose the private key.
 4. Generate a separate random value (at least 16 characters) for `CRON_SECRET`. Vercel automatically uses it to authorize the notification cron in `vercel.json`.
 5. Optional Assistant AI: add `OPENAI_API_KEY` to Vercel. It uses the Responses API with `store: false` and the default `gpt-5.4-mini` model; set `OPENAI_MODEL` to override it. Without this key, `/assistant` stays fully usable in local briefing mode and sends nothing to an AI provider.
-6. Import the repo on [Vercel](https://vercel.com/new) and add `DATABASE_URL` plus the notification variables above. Use `npm run db:migrate && npm run build` as the Build Command so new migrations apply before the app starts.
-7. In Vercel Settings → Functions, choose the same region as the Supabase database; cross-region database calls make every screen feel slow.
-8. Deploy and open the URL on your phone → Add to Home Screen. Enable notifications from Today. iPhone Web Push requires the installed Home Screen app.
+6. In Vercel, add `MEGAAPP_USERNAME`, a strong `MEGAAPP_PASSWORD` of at least 12 characters, and a random `MEGAAPP_SESSION_SECRET` of at least 32 characters. Add them to Production and Preview.
+7. Import the repo on [Vercel](https://vercel.com/new) and add `DATABASE_URL` plus the notification variables above. Use `npm run db:migrate && npm run build` as the Build Command so new migrations apply before the app starts.
+8. In Vercel Settings → Functions, choose the same region as the Supabase database; cross-region database calls make every screen feel slow.
+9. Deploy, sign in, and open the URL on your phone → Add to Home Screen. Enable notifications from Today. iPhone Web Push requires the installed Home Screen app.
 
-After deploy, run `BASE_URL=https://your-app.vercel.app npm run alpha:production-smoke`. It verifies external database health, direct app access, push configuration, cron authorization, and public PWA assets without changing production data. Hosted deployments fail closed when `DATABASE_URL` is missing.
+After deploy, run `BASE_URL=https://your-app.vercel.app npm run alpha:production-smoke`. It verifies external database health, password protection, push configuration, cron authorization, and public PWA assets without changing production data. Hosted deployments fail closed when database or password-access configuration is missing.
 
 The committed Hobby-compatible schedule runs once daily at 21:00 Singapore time. The cron route also supports morning briefs if a paid plan or another scheduler invokes it between 06:00 and 10:00 Singapore time.
 
